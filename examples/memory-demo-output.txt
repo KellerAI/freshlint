@@ -1,0 +1,24 @@
+
+== 1. The agent saves a memory that claims certainty, with no evidence
+freshlint: api_limits.md says "root cause" but cites no evidence. Add a line that starts with **Evidence:** followed by backticked citations (for example `**Evidence:** `path/to/file.py#function_name``), or say when and how it was checked (for example "checked 2026-10-01 by running `pytest`").
+
+== 2. It cites code it has not read
+freshlint: api_limits.md cites src/limits.py#retry_after, which you have not read in this session. Read it with the Read tool before citing it, or remove the citation.
+
+== 3. It reads the code and saves again: fingerprinted, no feedback
+(silent)
+
+== 4. Someone changes the code. The next session starts
+freshlint: 1 memory needs re-checking before you rely on it.
+- api_limits.md: src/limits.py#retry_after changed after this memory was written.
+When one of these becomes relevant, re-read the cited code, then update or delete the memory.
+
+== 5. Saving again without re-reading renews nothing
+freshlint: api_limits.md rests on src/limits.py#retry_after, which changed after this memory was written. Re-read it before relying on or updating this memory.
+
+== 6. The agent re-reads the code, fixes the memory and saves: renewed, with a receipt
+(silent)
+receipts.md: - verified api_limits.md#evidence — re-read src/limits.py#retry_after (session 7d3b5e90)
+
+== 7. The next session starts clean
+(silent)

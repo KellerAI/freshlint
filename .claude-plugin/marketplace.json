@@ -1,0 +1,12 @@
+{
+  "name": "freshlint",
+  "owner": { "name": "Keller AI" },
+  "metadata": { "description": "Evidence-backed memory for Claude Code." },
+  "plugins": [
+    {
+      "name": "freshlint",
+      "source": "./",
+      "description": "Evidence-backed memory for Claude Code."
+    }
+  ]
+}

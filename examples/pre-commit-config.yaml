@@ -1,0 +1,7 @@
+# Example .pre-commit-config.yaml for a repository that holds agent memory.
+# freshlint is not published yet: point `repo` at a local checkout or a mirror.
+repos:
+  - repo: https://example.invalid/freshlint.git # placeholder until published
+    rev: v0.2.0
+    hooks:
+      - id: freshlint

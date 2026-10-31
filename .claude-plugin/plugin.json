@@ -1,0 +1,8 @@
+{
+  "name": "freshlint",
+  "version": "0.2.0",
+  "description": "Evidence-backed memory for Claude Code: flags memories whose cited code changed or is gone, and pushes back on certainty claims without evidence.",
+  "author": { "name": "Keller AI" },
+  "license": "Apache-2.0",
+  "keywords": ["memory", "agent-memory", "claude-code", "evidence", "freshness"]
+}

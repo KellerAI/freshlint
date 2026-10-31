@@ -1,0 +1,24 @@
+# Example workflow for a repository that holds agent memory.
+# Copy to .github/workflows/memory-honesty.yml.
+name: memory-honesty
+
+on:
+  pull_request:
+    paths: ["**/*.md", ".freshlint.toml", "pyproject.toml"]
+  schedule:
+    - cron: "0 6 * * 1" # weekly full scan: reviews expire even when nobody opens a PR
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # diff mode needs the merge base
+      - uses: KellerAI/freshlint@v0.2.0
+        with:
+          mode: auto # diff on pull requests, full scan on the schedule

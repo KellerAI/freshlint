@@ -1,0 +1,9 @@
+- id: freshlint
+  name: freshlint (memory honesty)
+  description: Catch freshness laundering and stale refreshes in staged markdown memory.
+  entry: freshlint check --staged
+  language: python
+  pass_filenames: false
+  files: '\.md$'
+  require_serial: true
+  minimum_pre_commit_version: "3.0.0"

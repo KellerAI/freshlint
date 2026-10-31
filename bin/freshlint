@@ -1,0 +1,23 @@
+#!/bin/sh
+# Run freshlint from this plugin with the first Python 3.11+ on PATH.
+# -P keeps the launch directory off sys.path, so a types.py or json.py in a project cannot shadow
+# the standard library (-P needs Python 3.11, the minimum).
+# As a hook it never fails a session: without Python it says so at session start and exits 0.
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+for py in python3.14 python3.13 python3.12 python3.11 python3; do
+  if command -v "$py" >/dev/null 2>&1 &&
+    "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec "$py" -P -m freshlint "$@"
+  fi
+done
+if [ "${1:-}" = "hook" ]; then
+  input=$(cat)
+  case "$input" in
+    *'"hook_event_name":"SessionStart"'* | *'"hook_event_name": "SessionStart"'*)
+      printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"freshlint is installed but inactive: it needs Python 3.11 or newer on PATH."}}'
+      ;;
+  esac
+  exit 0
+fi
+echo "freshlint: needs Python 3.11 or newer on PATH" >&2
+exit 2

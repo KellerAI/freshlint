@@ -1,0 +1,35 @@
+
+== 1. Commit a clean memory (one section is due for review in 2 days)
+$ freshlint check --today 2026-09-30
+context/shipping.md:4: warning [review-expired] Section "Carriers" review is due in 2 days (review_by=2026-10-02)
+freshlint: 0 errors, 1 warning in 5 files (full scan, today 2026-09-30)
+[exit 0]
+
+== 2. An agent silences the warning: new dates, same words
+$ git diff --unified=1
+diff --git a/context/shipping.md b/context/shipping.md
+index 9314ce0..7a3e03d 100644
+--- a/context/shipping.md
++++ b/context/shipping.md
+@@ -3,3 +3,3 @@
+ ## Carriers
+-<!-- memory: verified=2026-07-02 review_by=2026-10-02 -->
++<!-- memory: verified=2026-09-30 review_by=2026-12-30 -->
+ - Kits ship with two regional ground carriers, Parcel Owl and Desert Freight.
+[exit 0]
+$ freshlint check --today 2026-09-30
+freshlint: 0 errors, 0 warnings in 5 files (full scan, today 2026-09-30)
+[exit 0]
+
+== 3. The diff check sees that nothing was re-verified
+$ freshlint check --diff HEAD~1...HEAD --today 2026-09-30
+context/shipping.md:4: error [freshness-laundering] Section "Carriers" claims re-verification (verified 2026-07-02 -> 2026-09-30) but its content is unchanged
+    hint: if you re-checked it without editing, record a receipt in VERIFICATIONS.md:
+          - 2026-09-30 verified context/shipping.md#carriers — <what you checked it against>
+freshlint: 1 error, 0 warnings in 1 file (diff HEAD~1...HEAD, today 2026-09-30)
+[exit 1]
+
+== 4. The honest fix: re-check the carriers, then record a receipt
+$ freshlint check --diff HEAD~1...HEAD --today 2026-09-30
+freshlint: 0 errors, 0 warnings in 2 files (diff HEAD~1...HEAD, today 2026-09-30)
+[exit 0]

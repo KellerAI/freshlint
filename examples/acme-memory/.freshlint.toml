@@ -1,0 +1,9 @@
+# Memory policy for the fictional Acme Rocket Supply example.
+include = ["context/*.md", "concepts/*.md"]
+section_level = 2
+
+[rules]
+missing-marker = "error"
+
+[receipts]
+paths = ["VERIFICATIONS.md"]

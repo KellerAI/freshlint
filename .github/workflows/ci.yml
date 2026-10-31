@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "ruff>=0.15,<0.16"
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+
+      - name: shellcheck the demo and the plugin runner
+        run: shellcheck examples/demo.sh bin/freshlint
+
+      - name: Demo output matches the README
+        run: |
+          examples/demo.sh > "$RUNNER_TEMP/demo.txt"
+          diff -u examples/demo-output.txt "$RUNNER_TEMP/demo.txt"
+
+      - name: Memory demo output matches the golden file
+        run: |
+          python examples/memory_demo.py > "$RUNNER_TEMP/memory-demo.txt"
+          diff -u examples/memory-demo-output.txt "$RUNNER_TEMP/memory-demo.txt"
+
+      - name: Acme memory is clean on the demo date (one documented warning)
+        working-directory: examples/acme-memory
+        run: freshlint check --today 2026-09-30
+
+      - name: Acme memory fails after its review dates (documented failure)
+        working-directory: examples/acme-memory
+        run: |
+          set +e
+          freshlint check --today 2026-12-31 --format json > "$RUNNER_TEMP/late.json"
+          code=$?
+          set -e
+          test "$code" -eq 1
+          python - "$RUNNER_TEMP/late.json" <<'PY'
+          import json, sys
+          findings = json.load(open(sys.argv[1]))["findings"]
+          assert {f["rule"] for f in findings} == {"review-expired"}, findings
+          assert len(findings) == 7, len(findings)
+          print(f"ok: {len(findings)} documented review-expired findings")
+          PY
+
+      - name: Composite action runs on the example memory
+        uses: ./
+        with:
+          mode: full
+          working-directory: examples/acme-memory
+          today: "2026-09-30"
+
+      - name: Self-check (README comparison section is still within its review date)
+        run: freshlint check --format github
+
+      - name: Diff check on this pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: freshlint check --diff "$BASE_SHA...HEAD" --format github
