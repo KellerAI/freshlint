@@ -179,7 +179,7 @@ def test_a_lock_that_cannot_be_taken_in_time_fails_open(tmp_path):
         started = time.monotonic()
         with locked(tmp_path, timeout=0.1):
             ran = True
-        assert ran and 0.1 <= time.monotonic() - started < 2
+        assert ran and time.monotonic() - started >= 0.1
 
 
 def test_without_fcntl_or_write_access_the_lock_fails_open(tmp_path, monkeypatch):

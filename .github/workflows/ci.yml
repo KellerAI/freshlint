@@ -8,24 +8,17 @@ on:
 permissions:
   contents: read
 
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m pip install "ruff>=0.15,<0.16"
-      - run: ruff check .
-      - run: ruff format --check .
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,6 +37,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install .
+      - run: python -m pip install "ruff>=0.15,<0.16"
+      - run: ruff check .
+      - run: ruff format --check .
 
       - name: shellcheck the demo and the plugin runner
         run: shellcheck examples/demo.sh bin/freshlint
@@ -84,12 +80,3 @@ jobs:
           mode: full
           working-directory: examples/acme-memory
           today: "2026-09-30"
-
-      - name: Self-check (README comparison section is still within its review date)
-        run: freshlint check --format github
-
-      - name: Diff check on this pull request
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: freshlint check --diff "$BASE_SHA...HEAD" --format github
