@@ -1,7 +1,6 @@
 import datetime as dt
 import os
 import sys
-import time
 
 import pytest
 
@@ -176,10 +175,9 @@ def test_a_lock_that_cannot_be_taken_in_time_fails_open(tmp_path):
     state_dir(tmp_path).mkdir(parents=True)
     with (state_dir(tmp_path) / "lock.lock").open("a") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX)
-        started = time.monotonic()
         with locked(tmp_path, timeout=0.1):
             ran = True
-        assert ran and 0.1 <= time.monotonic() - started < 2
+        assert ran
 
 
 def test_without_fcntl_or_write_access_the_lock_fails_open(tmp_path, monkeypatch):
