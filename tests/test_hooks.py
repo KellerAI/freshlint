@@ -532,3 +532,16 @@ def test_a_citation_read_but_not_fingerprintable_is_not_reported_as_unread_next_
     text = context(second)
     assert "b.md: cites src/b.py#nope, but when the memory was saved 'nope' is not defined" in text
     assert "was not read" not in text
+
+
+def test_a_directory_citation_is_reported_as_a_directory_on_save_and_at_session_start(
+    claude_project,
+):
+    claude_project.write("src/a.py", "x\n")
+    note = claude_project.note("a.md", "**Evidence:** `src`")
+    saved = context(tool(claude_project, "Write", note))
+    assert "src is a directory; cite a file inside it" in saved
+    assert "not read" not in saved
+    started = context(send(claude_project, "SessionStart", "s2", source="startup"))
+    assert "src is a directory; cite a file inside it" in started
+    assert "not read" not in started

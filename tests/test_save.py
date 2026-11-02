@@ -404,3 +404,16 @@ def test_a_save_accepts_a_claim_with_a_marker_line_or_a_standalone_tag_and_not_o
     ):
         note = read_note(claude_project.note(f"w{index}.md", text))
         assert len(on_save(note, Store(), {}, ctx(claude_project), TODAY).feedback) == 1, text
+
+
+def test_citing_a_directory_says_to_cite_a_file_inside_it(claude_project):
+    claude_project.write("src/a.py", "x\n")
+    note = read_note(claude_project.note("a.md", "**Evidence:** `src`"))
+    store = Store()
+    out = on_save(note, store, {}, ctx(claude_project), TODAY)
+    assert out.feedback == ["a.md cites src, but src is a directory; cite a file inside it."]
+    record = store.notes["a.md"].citations["src"]
+    assert (record.fingerprint, record.problem) == (
+        None,
+        "missing:src is a directory; cite a file inside it",
+    )
