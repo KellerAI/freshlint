@@ -31,6 +31,7 @@ from freshlint.fingerprint import (
     CHANGED,
     FRESH,
     GONE,
+    UNREAD,
     Fingerprint,
     TargetMissing,
     cites_directory,
@@ -41,6 +42,7 @@ from freshlint.fingerprint import (
     is_missing,
     level_note,
     take,
+    unread_summary,
 )
 from freshlint.ledger import raw_digest
 from freshlint.memory import Note
@@ -110,14 +112,15 @@ def _save_directory(
         outcome.feedback.append(f"{note.name} cites {cit.raw}, but {exc}.")
         return _keep(old, f"missing:{exc}")
     seen = [reads.get(str(target.resolve())) for _, target in files]
-    if any(digest is None for digest in seen):
+    unread = [rel for (rel, _), digest in zip(files, seen, strict=True) if digest is None]
+    if unread:
         if old is None or old.fingerprint is None:
             outcome.feedback.append(
                 f"{note.name} cites {cit.raw}, a directory, but you have not read every file "
-                "in it in this session. Read each one with the Read tool before citing it, or "
-                f"cite the files you read.{_slash_hint(cit)}"
+                f"in it in this session ({unread_summary(unread)}). Read each one with the "
+                f"Read tool before citing it, or cite the files you read.{_slash_hint(cit)}"
             )
-            return CitationRecord(None, None)
+            return CitationRecord(None, None, UNREAD + "\n".join(sorted(unread)))
         if state == CHANGED:
             outcome.feedback.append(
                 f"{note.name} rests on {cit.raw}, which changed after this memory was written"

@@ -126,6 +126,19 @@ def file_digest(text: str) -> str:
     return _sha("\n".join(normalize(text)))
 
 
+UNREAD = "unread:"  # a record problem: the files of a directory left unread, one per line
+UNREAD_NAMES_SHOWN = 5  # unread files a message names before "…and N more"
+
+
+def unread_summary(names: list[str]) -> str:
+    """``3 files unread: a.py, b.py, c.py``, naming the first few in sorted order."""
+    names = sorted(names)
+    shown = ", ".join(names[:UNREAD_NAMES_SHOWN])
+    more = len(names) - UNREAD_NAMES_SHOWN
+    count = f"{len(names)} file{'' if len(names) == 1 else 's'} unread"
+    return f"{count}: {shown}" + (f" …and {more} more" if more > 0 else "")
+
+
 def cites_directory(cit: Citation) -> bool:
     """Whether a citation of a directory is fingerprinted as one (a manifest of its files).
 

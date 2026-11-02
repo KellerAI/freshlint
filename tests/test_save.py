@@ -412,12 +412,13 @@ def test_citing_a_bare_directory_unread_points_to_the_slash_form(claude_project)
     store = Store()
     out = on_save(note, store, {}, ctx(claude_project), TODAY)
     assert out.feedback == [
-        "a.md cites src, a directory, but you have not read every file in it in this session. "
+        "a.md cites src, a directory, but you have not read every file in it in this session "
+        "(1 file unread: a.py). "
         "Read each one with the Read tool before citing it, or cite the files you read. "
         "Write it as `src/` to cite the directory."
     ]
     record = store.notes["a.md"].citations["src"]
-    assert (record.fingerprint, record.problem) == (None, None)
+    assert (record.fingerprint, record.problem) == (None, "unread:a.py")
 
 
 def test_citing_a_directory_with_a_hash_part_says_to_cite_a_file_inside_it(claude_project):

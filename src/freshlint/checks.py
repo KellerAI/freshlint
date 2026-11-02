@@ -29,11 +29,13 @@ from freshlint.evidence import (
 from freshlint.fingerprint import (
     CHANGED,
     GONE,
+    UNREAD,
     compare,
     directory_changes,
     file_digest,
     is_missing,
     level_note,
+    unread_summary,
 )
 from freshlint.memory import Note, note_paths, read_note
 from freshlint.store import InferredRecord, NoteRecord, Store
@@ -213,9 +215,12 @@ def _explicit_findings(
                 )
             elif target.is_dir():  # the save hook saw a directory with files left unread
                 hint = "" if cit.path.endswith("/") else f" Write it as `{cit.path}/`."
+                names = ""
+                if problem is not None and problem.startswith(UNREAD):
+                    names = f" ({unread_summary(problem[len(UNREAD) :].splitlines())})"
                 message = (
                     f"cites {cit.raw}, a directory, but not every file in it was read when the "
-                    f"memory was saved, so it was never fingerprinted.{hint}"
+                    f"memory was saved{names}, so it was never fingerprinted.{hint}"
                 )
             else:  # the save hook saw the citation and recorded that it was not read
                 message = (

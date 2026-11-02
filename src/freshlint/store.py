@@ -38,7 +38,8 @@ class CitationRecord:
     stamped: str | None
     # Why a citation the save hook saw has no fingerprint although the agent read the file:
     # "changed" (it changed after the read) or "missing:<why>" (the symbol, key or range is not
-    # there). None for a citation that was never read.
+    # there), or "unread:" and the unread files of a cited directory, one per line. None for a
+    # citation that was never read.
     problem: str | None = None
 
 

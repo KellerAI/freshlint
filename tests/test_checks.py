@@ -916,6 +916,6 @@ def test_a_directory_cited_at_save_is_reported_as_a_directory_at_session_start(c
         (
             "unread",
             "cites src, a directory, but not every file in it was read when the memory was "
-            "saved, so it was never fingerprinted. Write it as `src/`.",
+            "saved (1 file unread: a.py), so it was never fingerprinted. Write it as `src/`.",
         )
     ]

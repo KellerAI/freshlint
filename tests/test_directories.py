@@ -16,11 +16,13 @@ from freshlint.fingerprint import (
     DIR_MAX_FILES,
     FRESH,
     GONE,
+    UNREAD_NAMES_SHOWN,
     TargetMissing,
     compare,
     directory_changes,
     file_digest,
     take,
+    unread_summary,
 )
 from freshlint.ledger import raw_digest
 from freshlint.memory import read_note
@@ -182,7 +184,8 @@ def test_a_directory_with_an_unread_file_is_not_stamped(ctree):
     out = save(project, store, read(a))
     assert len(out.feedback) == 1
     assert out.feedback[0].startswith(
-        "a.md cites src/x/, a directory, but you have not read every file in it in this session."
+        "a.md cites src/x/, a directory, but you have not read every file in it in this session "
+        "(1 file unread: b.py)."
     )
     assert store.notes["a.md"].citations["src/x/"].fingerprint is None
 
@@ -238,7 +241,7 @@ def test_a_directory_left_unread_at_save_says_so_at_session_start(ctree):
         (
             "unread",
             "cites src/x/, a directory, but not every file in it was read when the memory was "
-            "saved, so it was never fingerprinted.",
+            "saved (1 file unread: b.py), so it was never fingerprinted.",
         )
     ]
 
@@ -347,3 +350,49 @@ def test_hooks_an_old_directory_record_shows_until_re_saved_after_reading_every_
     tool(project, "Read", b, "s3")
     assert tool(project, "Write", note, "s3") is None
     assert send(project, "SessionStart", "s4", source="startup") is None
+
+
+# ---------------------------------------------------------------- naming the files left unread
+def test_unread_summary_names_at_most_the_shown_count_in_sorted_order():
+    assert UNREAD_NAMES_SHOWN == 5
+    assert unread_summary(["c", "a", "b"]) == "3 files unread: a, b, c"
+    assert unread_summary(["e", "d", "c", "b", "a"]) == "5 files unread: a, b, c, d, e"
+    assert unread_summary(list("gfedcba")) == "7 files unread: a, b, c, d, e …and 2 more"
+
+
+def unread_messages(project, body, reads):
+    store = Store()
+    out = save(project, store, reads, body=body)
+    result = scan(project.memory, ctx(project), store)
+    return out.feedback[0], result.findings[0].message
+
+
+@pytest.mark.parametrize(
+    ("count", "named"),
+    [
+        (3, "3 files unread: f0.py, f1.py, f2.py"),
+        (5, "5 files unread: f0.py, f1.py, f2.py, f3.py, f4.py"),
+        (8, "8 files unread: f0.py, f1.py, f2.py, f3.py, f4.py …and 3 more"),
+    ],
+)
+def test_save_and_session_start_name_the_unread_files(claude_project, count, named):
+    for i in reversed(range(count)):
+        claude_project.write(f"src/y/f{i}.py", f"v = {i}\n")
+    saved, started = unread_messages(claude_project, "**Evidence:** `src/y/`", {})
+    assert f"in this session ({named}). Read each one" in saved
+    assert f"when the memory was saved ({named}), so it was never" in started
+
+
+def test_a_bare_directory_names_its_unread_files_too(ctree):
+    project, a, _ = ctree
+    project.write("src/x/c.py", "c\n")
+    saved, started = unread_messages(project, "**Evidence:** `src/x`", read(a))
+    assert saved == (
+        "a.md cites src/x, a directory, but you have not read every file in it in this session "
+        "(2 files unread: b.py, c.py). Read each one with the Read tool before citing it, or "
+        "cite the files you read. Write it as `src/x/` to cite the directory."
+    )
+    assert started == (
+        "cites src/x, a directory, but not every file in it was read when the memory was saved "
+        "(2 files unread: b.py, c.py), so it was never fingerprinted. Write it as `src/x/`."
+    )
