@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from conftest import run_cli
+from freshlint import hooks, store
 from freshlint.cli import main
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +38,23 @@ def test_scan_does_not_write_the_store(claude_project):
     claude_project.note("a.md", "Plain note mentioning `src/a.py`.")
     run_cli(claude_project.path, "memory", "scan")
     assert not (claude_project.memory / ".freshlint").exists()
+
+
+def test_a_store_from_a_newer_freshlint_is_refused_and_left_unchanged(claude_project):
+    claude_project.write("src/x.py", "x\n")
+    claude_project.note("bad.md", "**Evidence:** `src/x.py`")
+    path = store.store_path(claude_project.memory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    newer = '{"version": 99, "notes": {"bad.md": {"future": true}}}'
+    path.write_text(newer)
+    for command in ("check", "scan"):
+        res = run_cli(claude_project.path, "memory", command)
+        assert res.code == 2
+        assert res.out == ""
+        assert res.err.strip() == (
+            f"{hooks.NEWER_STORE} (store version 99; this freshlint reads up to version 2)"
+        )
+    assert path.read_text() == newer
 
 
 def test_missing_memory_dir_is_a_usage_error(claude_project):

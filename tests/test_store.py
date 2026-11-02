@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import os
 import sys
 import time
@@ -8,6 +9,7 @@ import pytest
 from freshlint.fingerprint import Fingerprint
 from freshlint.receipts import check_order, parse_receipt_log
 from freshlint.store import (
+    STORE_VERSION,
     CitationRecord,
     InferredRecord,
     NoteRecord,
@@ -130,8 +132,60 @@ def test_corrupt_or_unknown_version_store_is_flagged(tmp_path):
     store_path(tmp_path).parent.mkdir(parents=True)
     store_path(tmp_path).write_text("{nope")
     assert load_store(tmp_path) == Store(corrupt=True)
-    store_path(tmp_path).write_text('{"version": 99, "notes": {}}')
+    store_path(tmp_path).write_text('{"version": "two", "notes": {}}')
     assert load_store(tmp_path).corrupt
+
+
+def test_a_version_1_store_is_read_without_changing_any_record(tmp_path):
+    v1 = {
+        "version": 1,
+        "notes": {
+            "a.md": {
+                "citations": {
+                    "src/a.py": {
+                        "fingerprint": {"kind": "file", "digest": "d1"},
+                        "stamped": "2026-09-01",
+                    },
+                    "src": {"fingerprint": None, "problem": "missing:src is a directory"},
+                }
+            }
+        },
+    }
+    store_path(tmp_path).parent.mkdir(parents=True)
+    store_path(tmp_path).write_text(json.dumps(v1))
+    got = load_store(tmp_path)
+    cits = got.notes["a.md"].citations
+    assert cits["src/a.py"].fingerprint == Fingerprint(kind="file", digest="d1")
+    assert cits["src/a.py"].fingerprint.entries == ()
+    assert cits["src/a.py"].stamped == "2026-09-01"
+    assert (cits["src"].fingerprint, cits["src"].problem) == (None, "missing:src is a directory")
+    save_store(tmp_path, got)
+    again = json.loads(store_path(tmp_path).read_text())
+    assert again["version"] == STORE_VERSION == 2
+    assert load_store(tmp_path).notes == got.notes
+
+
+def test_a_store_from_a_newer_version_is_flagged_and_never_overwritten(tmp_path):
+    store_path(tmp_path).parent.mkdir(parents=True)
+    newer = '{"version": 3, "notes": {"a.md": {"future": 1}}}'
+    store_path(tmp_path).write_text(newer)
+    got = load_store(tmp_path)
+    assert (got.newer, got.corrupt, got.notes) == (True, False, {})
+    got.notes["b.md"] = NoteRecord()
+    save_store(tmp_path, got)
+    assert store_path(tmp_path).read_text() == newer
+
+
+def test_a_directory_fingerprint_round_trips_its_entries(tmp_path):
+    fp = Fingerprint(kind="dir", digest="d", entries=(("a.py", "x"), ("b/c.py", "y")))
+    store = Store(notes={"a.md": NoteRecord(citations={"src/": CitationRecord(fp, "2026-10-01")})})
+    save_store(tmp_path, store)
+    raw = json.loads(store_path(tmp_path).read_text())
+    assert raw["notes"]["a.md"]["citations"]["src/"]["fingerprint"]["entries"] == [
+        ["a.py", "x"],
+        ["b/c.py", "y"],
+    ]
+    assert load_store(tmp_path).notes["a.md"].citations["src/"].fingerprint == fp
 
 
 def test_a_store_that_is_not_text_is_flagged_not_a_crash(tmp_path):

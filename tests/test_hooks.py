@@ -86,7 +86,7 @@ def test_session_start_then_save_keeps_last_scan(claude_project):
     before = json.loads(path.read_text())
     tool(claude_project, "Write", note, session="s1")
     saved = json.loads(path.read_text())
-    assert saved["version"] == 1
+    assert saved["version"] == store.STORE_VERSION == 2
     assert "last_scan" in saved
     assert saved["last_scan"] == before["last_scan"]
     second = send(claude_project, "SessionStart", "s2", source="startup")
@@ -545,3 +545,17 @@ def test_a_directory_citation_is_reported_as_a_directory_on_save_and_at_session_
     started = context(send(claude_project, "SessionStart", "s2", source="startup"))
     assert "src is a directory; write it as `src/` or cite a file inside it" in started
     assert "not read" not in started
+
+
+def test_a_store_from_a_newer_freshlint_is_reported_and_never_overwritten(claude_project):
+    claude_project.note("a.md", CLAIM)
+    path = store.store_path(claude_project.memory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    newer = '{"version": 3, "notes": {"a.md": {"future": true}}}'
+    path.write_text(newer)
+    started = send(claude_project, "SessionStart", "s1", source="startup")
+    assert context(started) == hooks.NEWER_STORE
+    assert path.read_text() == newer
+    saved = tool(claude_project, "Write", claude_project.memory / "a.md", session="s1")
+    assert hooks.NEWER_STORE in json.dumps(saved)
+    assert path.read_text() == newer

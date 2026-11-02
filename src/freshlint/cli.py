@@ -204,7 +204,15 @@ def _memory(args: argparse.Namespace) -> int:
         raise UsageError(f"no memory directory at {memory_dir}")
     ctx = Context(project, Path.home())
     patterns = tuple(args.include or ("*.md",))
-    result = scan(memory_dir, ctx, store.load_store(memory_dir), patterns=patterns)
+    evidence = store.load_store(memory_dir)
+    if evidence.newer:  # as the hooks do: refuse, rather than check against an empty store
+        print(
+            f"{hooks.NEWER_STORE} (store version {evidence.newer_version}; "
+            f"this freshlint reads up to version {store.STORE_VERSION})",
+            file=sys.stderr,
+        )
+        return 2
+    result = scan(memory_dir, ctx, evidence, patterns=patterns)
     report = memreport.json_report if args.format == "json" else memreport.full_report
     sys.stdout.write(report(result))
     if args.memory_command == "check" and any(f.reported for f in result.findings):
