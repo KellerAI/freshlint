@@ -79,18 +79,40 @@ way, freshlint says so, and `/freshlint:memory-check` lists it as low confidence
 | `path/to/file#L10-L24` | those lines, found again if they move (see Limits) |
 | `path/to/file.py#name`, `#Class.method` | that symbol (Python; brace languages such as TypeScript, Go, Rust, Java, C# and C/C++, see Declaration prefixes) |
 | `config.json#a.b`, `pyproject.toml#tool.x` | that key's value |
+| `path/to/dir/` | every file git would track under the directory (see Directory citations) |
 
 Trailing whitespace, line-ending style and blank lines at the start or end of the cited text
 do not count as changes. Any other edit does, including re-indenting. A symbol in a language
 freshlint does not parse, or one it cannot locate with confidence, is tracked as the whole
 file, and a finding about it says "tracked at file level". A citation that cannot be
 fingerprinted is kept without a fingerprint. A symbol, key or line range that does not exist is
-reported when the note is saved ("is not defined in ..."); a directory is reported as such
-("`dir` is a directory; cite a file inside it"), whether or not it was read. From then on every
+reported when the note is saved ("is not defined in ..."); a directory with a `#` part is
+reported as such ("`dir` is a directory; cite a file inside it"), whether or not it was read.
+From then on every
 session start repeats the same reason, until the note cites code that exists and the agent reads
 it and saves the note again. A citation with no saved record at all (a note written before install, or
 a first scan) is reported as having no saved fingerprint yet: that does not say it was not read,
 only that freshlint cannot tell; reading it and saving the note fingerprints it.
+
+#### Directory citations
+
+`src/auth/` (with the trailing `/`) cites a directory. Its fingerprint is a manifest of the
+files git would track under it: committed, staged, and untracked files that are not ignored.
+It reads `fresh` until one of them is edited, added, removed or renamed; ignored files never
+count, and each file's text is compared as above. The finding names what changed:
+"src/auth/ changed after this memory was written (login.py edited, token.py added)."
+
+- **Every file must be read.** The directory is fingerprinted only when every file in it was
+  read in this session, unchanged since. Otherwise the save says how many were not read and
+  names the first five in sorted order ("7 files unread: a.py, b.py, c.py, d.py, e.py …and 2
+  more"), and session start repeats it.
+- **A cap.** More than 50 files or 2 MB is refused: "`src/auth/` has more than 50 files or 2
+  MB: too large; cite a narrower directory or files". It never falls back to a weaker check.
+- **Git only.** Outside a git repo the citation is refused ("directory citations need a git
+  repo"), and a directory with no tracked files is refused ("has no tracked files").
+- **A bare `src/auth`** (no `/`) is taken as `src/auth/` the next time the note is saved after
+  every file was read. The note is not rewritten. Until then, a record saved by an earlier
+  version ("`src/auth` is a directory; cite a file inside it") is still reported.
 
 #### Declaration prefixes
 
