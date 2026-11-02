@@ -190,10 +190,13 @@ def test_line_after_the_final_newline_is_missing(tmp_path):
         take(cite("a.txt#L2"), path)
 
 
-def test_directory_citation_is_rejected(tmp_path):
+def test_a_bare_directory_citation_is_rejected_and_pointed_at_the_slash_form(tmp_path):
     (tmp_path / "d").mkdir()
-    with pytest.raises(TargetMissing, match="is a directory"):
+    with pytest.raises(TargetMissing) as exc:
         take(cite("d"), tmp_path / "d")
+    assert str(exc.value) == "d is a directory; write it as `d/` or cite a file inside it"
+    with pytest.raises(TargetMissing, match="^d is a directory; cite a file inside it$"):
+        take(cite("d#name"), tmp_path / "d")
 
 
 def test_unknown_language_symbol_falls_back_to_the_file(tmp_path):

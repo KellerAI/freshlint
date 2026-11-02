@@ -540,8 +540,8 @@ def test_a_directory_citation_is_reported_as_a_directory_on_save_and_at_session_
     claude_project.write("src/a.py", "x\n")
     note = claude_project.note("a.md", "**Evidence:** `src`")
     saved = context(tool(claude_project, "Write", note))
-    assert "src is a directory; cite a file inside it" in saved
+    assert "src is a directory; write it as `src/` or cite a file inside it" in saved
     assert "not read" not in saved
     started = context(send(claude_project, "SessionStart", "s2", source="startup"))
-    assert "src is a directory; cite a file inside it" in started
+    assert "src is a directory; write it as `src/` or cite a file inside it" in started
     assert "not read" not in started

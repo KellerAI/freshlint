@@ -26,7 +26,15 @@ from freshlint.evidence import (
     parse_evidence,
     resolve,
 )
-from freshlint.fingerprint import CHANGED, GONE, compare, file_digest, is_missing, level_note
+from freshlint.fingerprint import (
+    CHANGED,
+    GONE,
+    compare,
+    directory_changes,
+    file_digest,
+    is_missing,
+    level_note,
+)
 from freshlint.memory import Note, note_paths, read_note
 from freshlint.store import InferredRecord, NoteRecord, Store
 
@@ -203,6 +211,12 @@ def _explicit_findings(
                     f"cites {cit.raw}, but when the memory was saved {problem[8:]}, "
                     "so it was never fingerprinted."
                 )
+            elif target.is_dir():  # the save hook saw a directory with files left unread
+                hint = "" if cit.path.endswith("/") else f" Write it as `{cit.path}/`."
+                message = (
+                    f"cites {cit.raw}, a directory, but not every file in it was read when the "
+                    f"memory was saved, so it was never fingerprinted.{hint}"
+                )
             else:  # the save hook saw the citation and recorded that it was not read
                 message = (
                     f"cites {cit.raw}, but it was not read when the memory was saved, "
@@ -213,7 +227,11 @@ def _explicit_findings(
         target = resolve(cit.path, ctx.project_root, ctx.home)
         result = compare(cit, stored.fingerprint, target)
         if result == CHANGED:
-            if _cannot_open(target):
+            if stored.fingerprint.kind == "dir":  # name the files: compare gives one state
+                changes = directory_changes(stored.fingerprint, target)
+                where = f" ({', '.join(changes)})" if changes else ""
+                message = f"{cit.raw} changed after this memory was written{where}."
+            elif _cannot_open(target):
                 message = f"{cit.raw} cannot be read, so it could not be checked."
             else:
                 where = level_note(cit, stored.fingerprint, target)

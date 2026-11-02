@@ -411,9 +411,11 @@ def test_citing_a_directory_says_to_cite_a_file_inside_it(claude_project):
     note = read_note(claude_project.note("a.md", "**Evidence:** `src`"))
     store = Store()
     out = on_save(note, store, {}, ctx(claude_project), TODAY)
-    assert out.feedback == ["a.md cites src, but src is a directory; cite a file inside it."]
+    assert out.feedback == [
+        "a.md cites src, but src is a directory; write it as `src/` or cite a file inside it."
+    ]
     record = store.notes["a.md"].citations["src"]
     assert (record.fingerprint, record.problem) == (
         None,
-        "missing:src is a directory; cite a file inside it",
+        "missing:src is a directory; write it as `src/` or cite a file inside it",
     )
