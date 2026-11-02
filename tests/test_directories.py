@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import ClaudeProject
 from freshlint import coverage, hooks
 from freshlint.checks import Context, scan
 from freshlint.evidence import parse_citation as cite
@@ -24,7 +25,7 @@ from freshlint.fingerprint import (
 from freshlint.ledger import raw_digest
 from freshlint.memory import read_note
 from freshlint.save import on_save
-from freshlint.store import Store
+from freshlint.store import Store, store_path
 
 TODAY = dt.date(2026, 10, 1)
 
@@ -286,3 +287,63 @@ def test_hooks_end_to_end_quiet_until_a_file_changes_then_name_it(ctree):
     out = send(project, "SessionStart", "s3", source="startup")
     text = out["hookSpecificOutput"]["additionalContext"]
     assert "src/x/ changed after this memory was written (b.py edited)." in text
+
+
+# ---------------------------------------------------------------- a bare `dir` is taken as `dir/`
+def test_a_bare_directory_is_taken_as_a_directory_citation_at_save(ctree):
+    project, a, b = ctree
+    store = Store()
+    note = project.note("a.md", "**Evidence:** `src/x`")
+    out = on_save(read_note(note), store, read(a, b), ctx(project), TODAY)
+    assert out.feedback == []
+    assert store.notes["a.md"].citations["src/x"].fingerprint.kind == "dir"
+    assert note.read_text().endswith("`src/x`\n")  # the note is never rewritten
+    assert scan(project.memory, ctx(project), store).findings == []
+    b.write_text("b = 0\n")
+    assert [f.message for f in scan(project.memory, ctx(project), store).findings] == [
+        "src/x changed after this memory was written (b.py edited)."
+    ]
+
+
+def test_a_bare_directory_over_the_cap_is_refused_like_a_slash_one(ctree):
+    project, *_ = ctree
+    for i in range(DIR_MAX_FILES):
+        project.write(f"src/x/f{i:02}.py", "x\n")
+    out = save(project, Store(), {}, body="**Evidence:** `src/x`")
+    assert out.feedback == [f"a.md cites src/x, but {TOO_LARGE}."]
+
+
+def test_a_bare_directory_outside_git_is_refused_like_a_slash_one(tmp_path):
+    (tmp_path / "plain").mkdir()
+    project = ClaudeProject(tmp_path / "plain")  # never `git init`
+    project.write("src/x/a.py", "a = 1\n")
+    note = read_note(project.note("a.md", "**Evidence:** `src/x`"))
+    out = on_save(note, Store(), {}, ctx(project), TODAY)
+    assert out.feedback == [
+        "a.md cites src/x, but src/x/ is not in a git repo: directory citations need a git repo."
+    ]
+
+
+def test_hooks_an_old_directory_record_shows_until_re_saved_after_reading_every_file(ctree):
+    project, a, b = ctree
+    project.commit("code")
+    note = project.note("x.md", "The x package.\n\n**Evidence:** `src/x`")
+    path = store_path(project.memory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = "missing:src/x is a directory; cite a file inside it"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "notes": {"x.md": {"citations": {"src/x": {"fingerprint": None, "problem": old}}}},
+            }
+        )
+    )
+    started = send(project, "SessionStart", "s1", source="startup")
+    assert "src/x is a directory; cite a file inside it" in json.dumps(started)
+    send(project, "SessionStart", "s2", source="startup")
+    assert "src/x is a directory" in json.dumps(send(project, "SessionStart", "s2", source="x"))
+    tool(project, "Read", a, "s3")
+    tool(project, "Read", b, "s3")
+    assert tool(project, "Write", note, "s3") is None
+    assert send(project, "SessionStart", "s4", source="startup") is None

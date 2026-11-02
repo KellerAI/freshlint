@@ -33,6 +33,7 @@ from freshlint.fingerprint import (
     GONE,
     Fingerprint,
     TargetMissing,
+    cites_directory,
     compare,
     directory_changes,
     directory_files,
@@ -78,8 +79,8 @@ def _drop_covered(record: NoteRecord, block: EvidenceBlock, ctx: Context) -> Non
 
 
 def _directory_citation(cit: Citation, path: Path) -> bool:
-    """Whether ``cit`` cites a directory: a file citation written ``dir/``."""
-    return cit.kind == "file" and cit.path.endswith("/") and path.is_dir()
+    """Whether ``cit`` cites a directory that is fingerprinted as one; see ``cites_directory``."""
+    return cites_directory(cit) and path.is_dir()
 
 
 def _slash_hint(cit: Citation) -> str:

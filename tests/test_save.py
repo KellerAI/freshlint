@@ -406,16 +406,22 @@ def test_a_save_accepts_a_claim_with_a_marker_line_or_a_standalone_tag_and_not_o
         assert len(on_save(note, Store(), {}, ctx(claude_project), TODAY).feedback) == 1, text
 
 
-def test_citing_a_directory_says_to_cite_a_file_inside_it(claude_project):
+def test_citing_a_bare_directory_unread_points_to_the_slash_form(claude_project):
     claude_project.write("src/a.py", "x\n")
     note = read_note(claude_project.note("a.md", "**Evidence:** `src`"))
     store = Store()
     out = on_save(note, store, {}, ctx(claude_project), TODAY)
     assert out.feedback == [
-        "a.md cites src, but src is a directory; write it as `src/` or cite a file inside it."
+        "a.md cites src, a directory, but you have not read every file in it in this session. "
+        "Read each one with the Read tool before citing it, or cite the files you read. "
+        "Write it as `src/` to cite the directory."
     ]
     record = store.notes["a.md"].citations["src"]
-    assert (record.fingerprint, record.problem) == (
-        None,
-        "missing:src is a directory; write it as `src/` or cite a file inside it",
-    )
+    assert (record.fingerprint, record.problem) == (None, None)
+
+
+def test_citing_a_directory_with_a_hash_part_says_to_cite_a_file_inside_it(claude_project):
+    claude_project.write("src/a.py", "x\n")
+    note = read_note(claude_project.note("a.md", "**Evidence:** `src#name`"))
+    out = on_save(note, Store(), {}, ctx(claude_project), TODAY)
+    assert out.feedback == ["a.md cites src#name, but src is a directory; cite a file inside it."]

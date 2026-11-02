@@ -540,11 +540,11 @@ def test_a_directory_citation_is_reported_as_a_directory_on_save_and_at_session_
     claude_project.write("src/a.py", "x\n")
     note = claude_project.note("a.md", "**Evidence:** `src`")
     saved = context(tool(claude_project, "Write", note))
-    assert "src is a directory; write it as `src/` or cite a file inside it" in saved
-    assert "not read" not in saved
+    assert "a.md cites src, a directory, but you have not read every file in it" in saved
+    assert "Write it as `src/` to cite the directory." in saved
     started = context(send(claude_project, "SessionStart", "s2", source="startup"))
-    assert "src is a directory; write it as `src/` or cite a file inside it" in started
-    assert "not read" not in started
+    assert "cites src, a directory, but not every file in it was read" in started
+    assert "Write it as `src/`." in started
 
 
 def test_a_store_from_a_newer_freshlint_is_reported_and_never_overwritten(claude_project):

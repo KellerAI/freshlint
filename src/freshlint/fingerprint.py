@@ -126,6 +126,15 @@ def file_digest(text: str) -> str:
     return _sha("\n".join(normalize(text)))
 
 
+def cites_directory(cit: Citation) -> bool:
+    """Whether a citation of a directory is fingerprinted as one (a manifest of its files).
+
+    ``dir/`` always is. A bare ``dir`` is too: it is taken as ``dir/`` at the next save, with
+    the note left as written. Any ``#`` part (symbol, key, line range) never is.
+    """
+    return cit.kind == "file"
+
+
 def directory_problem(cit: Citation) -> str:
     """What is wrong with citing a directory without the trailing ``/`` of a directory citation."""
     if cit.kind == "file":
@@ -311,7 +320,7 @@ def take(cit: Citation, path: Path) -> Fingerprint:
         raise _Unreadable(f"{cit.path} cannot be read")
     if text is None and large is None:
         if path.is_dir():
-            if cit.kind == "file" and cit.path.endswith("/"):
+            if cites_directory(cit):
                 return _manifest(path, cit.path)
             raise TargetMissing(directory_problem(cit))
         raise TargetMissing(f"{cit.path} does not exist")

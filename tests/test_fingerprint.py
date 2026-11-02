@@ -190,11 +190,11 @@ def test_line_after_the_final_newline_is_missing(tmp_path):
         take(cite("a.txt#L2"), path)
 
 
-def test_a_bare_directory_citation_is_rejected_and_pointed_at_the_slash_form(tmp_path):
+def test_a_bare_directory_citation_is_taken_as_a_directory_citation(tmp_path):
     (tmp_path / "d").mkdir()
     with pytest.raises(TargetMissing) as exc:
         take(cite("d"), tmp_path / "d")
-    assert str(exc.value) == "d is a directory; write it as `d/` or cite a file inside it"
+    assert str(exc.value) == "d/ is not in a git repo: directory citations need a git repo"
     with pytest.raises(TargetMissing, match="^d is a directory; cite a file inside it$"):
         take(cite("d#name"), tmp_path / "d")
 
