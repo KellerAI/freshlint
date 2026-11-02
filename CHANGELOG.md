@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Rule IDs are part of the public interface:
 renaming or removing one is a breaking change.
 
+## [Unreleased]
+
+### Fixed
+
+- A citation of a directory is reported as a directory when the note is saved
+  ("`dir` is a directory; cite a file inside it") instead of as unread code, and session start
+  repeats that reason instead of "it was not read when the memory was saved". The finding kind
+  is still `unread`. The README no longer says directories get "is not defined in ...".
+
 ## [0.2.0] - 2026-10-30
 
 ### Added

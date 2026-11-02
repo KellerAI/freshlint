@@ -81,10 +81,11 @@ Trailing whitespace, line-ending style and blank lines at the start or end of th
 do not count as changes. Any other edit does, including re-indenting. A symbol in a language
 freshlint does not parse, or one it cannot locate with confidence, is tracked as the whole
 file, and a finding about it says "tracked at file level". A citation that cannot be
-fingerprinted (a symbol, key or line range that does not exist, or a directory) is kept without
-a fingerprint: freshlint reports it when the note is saved ("is not defined in ..."), and from
-then on it shows as unread at every session start, until the agent reads code that exists and
-saves the note again. A citation with no saved record at all (a note written before install, or
+fingerprinted is kept without a fingerprint. A symbol, key or line range that does not exist is
+reported when the note is saved ("is not defined in ..."); a directory is reported as such
+("`dir` is a directory; cite a file inside it"), whether or not it was read. From then on every
+session start repeats the same reason, until the note cites code that exists and the agent reads
+it and saves the note again. A citation with no saved record at all (a note written before install, or
 a first scan) is reported as having no saved fingerprint yet: that does not say it was not read,
 only that freshlint cannot tell; reading it and saving the note fingerprints it.
 
