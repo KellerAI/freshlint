@@ -6,8 +6,10 @@ Thanks for helping. A few ground rules keep freshlint small and trustworthy.
 
 - **No runtime dependencies.** The standard library only (`tomllib`, `re`, `json`,
   `argparse`, `subprocess` for git). Development tools such as pytest and ruff are fine.
-- **Deterministic and offline.** No network access, no clock reads except the default
-  for `--today`, sorted output.
+- **Deterministic and offline.** The CLI and the plugin never access the network; no clock
+  reads except the default for `--today`, sorted output. The composite action uploads a
+  run summary (paths, rule ids, counts and static rule summaries, never file contents) only
+  when a workflow sets `team: true`.
 - **Read-only.** freshlint never writes to the files or repositories it checks.
 - **Stable rule IDs.** Renaming or removing a rule is a breaking change.
 

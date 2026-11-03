@@ -14,8 +14,8 @@ def test_version_flag_prints_package_version(capsys):
     assert out.strip() == f"freshlint {freshlint.__version__}"
 
 
-def test_version_is_0_2_0():
-    assert freshlint.__version__ == "0.2.0"
+def test_version_is_0_3_0():
+    assert freshlint.__version__ == "0.3.0"
 
 
 def test_package_pyproject_and_plugin_versions_agree():

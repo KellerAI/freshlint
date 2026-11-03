@@ -1,0 +1,2 @@
+examples/acme-memory/context/shipping.md:4: warning [review-expired] Section "Carriers" review is due in 2 days (review_by=2026-10-02)
+freshlint: 0 errors, 1 warning in 5 files (full scan, today 2026-09-30)

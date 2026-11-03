@@ -177,8 +177,10 @@ frontmatter is ignored, never rejected.
 
 ## Determinism
 
-No network access, no writes, no clock reads except `datetime.date.today()` when
-`--today` is not given. Output is sorted by path, line and rule.
+The CLI never accesses the network. No writes, no clock reads except `datetime.date.today()`
+when `--today` is not given. Output is sorted by path, line and rule. The composite GitHub
+Action uploads a run summary (paths, rule ids, counts and static rule summaries, never file
+contents) only when a workflow sets `team: true`; see the README.
 
 ## Known limitations
 

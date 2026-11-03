@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/KellerAI/freshlint/main/schemas/team-run-v1.schema.json",
+  "title": "freshlint-team-run/1",
+  "description": "One freshlint check run, as the composite action uploads it when the workflow sets team: true. Built by python -m freshlint.team_payload. It never carries file contents: finding messages are static rule summaries from the catalog, and hints are dropped.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository_id",
+    "repo",
+    "sha",
+    "ran_at",
+    "freshlint_version",
+    "mode",
+    "summary",
+    "findings"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "freshlint-team-run/1"
+    },
+    "repository_id": {
+      "description": "GITHUB_REPOSITORY_ID. The server takes the trusted value from the OIDC token and rejects a mismatch.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "repo": {
+      "description": "GITHUB_REPOSITORY (owner/name), for display only.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$"
+    },
+    "sha": {
+      "description": "GITHUB_SHA. The server takes the trusted value from the OIDC token and rejects a mismatch.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "ran_at": {
+      "description": "When the payload was built, as an RFC 3339 UTC timestamp.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "freshlint_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([.+-][0-9A-Za-z.+-]{1,32})?$"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["full", "diff", "staged"]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings", "files"],
+      "properties": {
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "files": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "findings": {
+      "description": "At most MAX_FINDINGS (5000). The whole body is at most MAX_PAYLOAD_BYTES (1048576).",
+      "type": "array",
+      "maxItems": 5000,
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "kind", "severity", "message"],
+      "properties": {
+        "path": {
+          "description": "The checked file's path, relative to the repository root.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "line": { "type": "integer", "minimum": 0 },
+        "kind": {
+          "description": "The freshlint rule id.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]{1,64}$"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning"]
+        },
+        "message": {
+          "description": "The static catalog summary for the rule (catalog.RULES[kind].summary), or \"Freshlint finding.\" for a rule this version does not know. Never the CLI's own message.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    }
+  }
+}
