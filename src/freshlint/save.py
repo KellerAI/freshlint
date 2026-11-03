@@ -40,6 +40,7 @@ from freshlint.fingerprint import (
     directory_files,
     directory_problem,
     is_missing,
+    kind_change,
     level_note,
     take,
     unread_summary,
@@ -124,7 +125,7 @@ def _save_directory(
         if state == CHANGED:
             outcome.feedback.append(
                 f"{note.name} rests on {cit.raw}, which changed after this memory was written"
-                f"{_named(old.fingerprint, path)}. Re-read it before relying on or updating "
+                f"{_named(cit, old.fingerprint, path)}. Re-read it before relying on or updating "
                 "this memory."
             )
         return old
@@ -146,8 +147,11 @@ def _save_directory(
     return CitationRecord(fingerprint, today.isoformat())
 
 
-def _named(stored: Fingerprint, path: Path) -> str:
-    """`` (a.py edited, b.py added)`` for a directory manifest, else nothing."""
+def _named(cit: Citation, stored: Fingerprint, path: Path) -> str:
+    """``: src/x is now a directory`` or `` (a.py edited, b.py added)``, else nothing."""
+    reason = kind_change(cit, stored, path)
+    if reason is not None:
+        return f": {reason}"
     if stored.kind != "dir":
         return ""
     changes = directory_changes(stored, path)
@@ -185,6 +189,15 @@ def on_save(
                     "Cite a file that exists, or remove the citation."
                 )
             continue
+        if state == CHANGED and not _directory_citation(cit, path):
+            reason = kind_change(cit, old.fingerprint, path)
+            if reason is not None:  # nothing to re-fingerprint: report it as session start does
+                kept[cit.raw] = old
+                outcome.feedback.append(
+                    f"{note.name} rests on {cit.raw}, which changed after this memory was "
+                    f"written: {reason}. Re-read it before relying on or updating this memory."
+                )
+                continue
         if _directory_citation(cit, path):
             kept[cit.raw] = _save_directory(note, cit, path, old, state, reads, outcome, today)
             continue

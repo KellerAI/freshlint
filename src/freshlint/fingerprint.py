@@ -155,6 +155,22 @@ def directory_problem(cit: Citation) -> str:
     return f"{cit.path} is a directory; cite a file inside it"
 
 
+def kind_change(cit: Citation, stored: Fingerprint, path: Path) -> str | None:
+    """Why ``path`` can no longer match ``stored``: a file became a directory, or the reverse.
+
+    Save and session start both report this text, so the two never give different reasons.
+    """
+    try:
+        is_dir = path.is_dir()
+    except OSError:  # cannot even be looked at: unreadable, not a change of kind
+        return None
+    if stored.kind != "dir" and is_dir:
+        return f"{cit.path.rstrip('/')} is now a directory"
+    if stored.kind == "dir" and not is_dir and not is_missing(path):
+        return f"{cit.path.rstrip('/')} is now a file"
+    return None
+
+
 def directory_files(path: Path, cited: str) -> list[tuple[str, Path]]:
     """The files a directory citation covers: ``(path relative to it, path)``, sorted.
 
@@ -164,6 +180,8 @@ def directory_files(path: Path, cited: str) -> list[tuple[str, Path]]:
     ``DIR_MAX_BYTES`` bytes are refused with ``TargetMissing``: never a weaker check.
     """
     shown = cited if cited.endswith("/") else cited + "/"
+    if not path.is_dir():  # git cannot run in a file: say so instead of failing
+        raise TargetMissing(f"{shown} is not a directory")
     try:
         if gitio.toplevel(path) is None:
             raise TargetMissing(
@@ -399,6 +417,8 @@ def _compare_directory(stored: Fingerprint, path: Path) -> str:
 
 
 def compare(cit: Citation, stored: Fingerprint, path: Path) -> str:
+    if kind_change(cit, stored, path) is not None:  # it exists, so it is not GONE
+        return CHANGED
     if stored.kind == "dir":  # before the load below, which answers GONE for any directory
         return _compare_directory(stored, path)
     text, large = _load(path)

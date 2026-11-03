@@ -396,3 +396,74 @@ def test_a_bare_directory_names_its_unread_files_too(ctree):
         "cites src/x, a directory, but not every file in it was read when the memory was saved "
         "(2 files unread: b.py, c.py), so it was never fingerprinted. Write it as `src/x/`."
     )
+
+
+def _turn_into_a_directory(project):
+    (project.path / "src/x").unlink()
+    return project.write("src/x/a.py", "a = 1\n")
+
+
+def _session_start(project, store):
+    result = scan(project.memory, ctx(project), store)
+    return [(f.state, f.message) for f in result.findings]
+
+
+@pytest.mark.parametrize("cited", ["src/x#f", "src/x"])
+def test_a_cited_file_that_becomes_a_directory_gives_one_reason_on_save_and_session_start(
+    claude_project, cited
+):
+    project = claude_project
+    f = project.write("src/x", "def f():\n    return 1\n")
+    store = Store()
+    body = f"**Evidence:** `{cited}`"
+    assert save(project, store, read(f), body).feedback == []
+    _turn_into_a_directory(project)
+    reason = "src/x is now a directory"
+    assert _session_start(project, store) == [
+        ("changed", f"{cited} changed after this memory was written: {reason}.")
+    ]
+    out = save(project, store, {}, body)
+    assert out.feedback == [
+        f"a.md rests on {cited}, which changed after this memory was written: {reason}. "
+        "Re-read it before relying on or updating this memory."
+    ]
+    assert _session_start(project, store)[0][1].endswith(f": {reason}.")
+
+
+def test_a_bare_file_that_became_a_directory_is_re_fingerprinted_once_every_file_is_read(
+    claude_project,
+):
+    project = claude_project
+    f = project.write("src/x", "x = 1\n")
+    store = Store()
+    save(project, store, read(f), "**Evidence:** `src/x`")
+    a = _turn_into_a_directory(project)
+    out = save(project, store, read(a), "**Evidence:** `src/x`")
+    assert (out.feedback, out.renewed) == ([], ["src/x"])
+    assert store.notes["a.md"].citations["src/x"].fingerprint.kind == "dir"
+    assert _session_start(project, store) == []
+
+
+def test_a_cited_directory_that_becomes_a_file_gives_one_reason_and_save_does_not_crash(ctree):
+    project, a, b = ctree
+    store = Store()
+    save(project, store, read(a, b))
+    project.remove("src/x/a.py")
+    project.remove("src/x/b.py")
+    (project.path / "src/x").rmdir()
+    project.write("src/x", "x = 1\n")
+    reason = "src/x is now a file"
+    assert _session_start(project, store) == [
+        ("changed", f"src/x/ changed after this memory was written: {reason}.")
+    ]
+    out = save(project, store, {})
+    assert out.feedback == [
+        f"a.md rests on src/x/, which changed after this memory was written: {reason}. "
+        "Re-read it before relying on or updating this memory."
+    ]
+    assert (
+        directory_changes(
+            store.notes["a.md"].citations["src/x/"].fingerprint, project.path / "src/x"
+        )
+        == []
+    )

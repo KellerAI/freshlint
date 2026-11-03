@@ -34,6 +34,7 @@ from freshlint.fingerprint import (
     directory_changes,
     file_digest,
     is_missing,
+    kind_change,
     level_note,
     unread_summary,
 )
@@ -232,7 +233,10 @@ def _explicit_findings(
         target = resolve(cit.path, ctx.project_root, ctx.home)
         result = compare(cit, stored.fingerprint, target)
         if result == CHANGED:
-            if stored.fingerprint.kind == "dir":  # name the files: compare gives one state
+            reason = kind_change(cit, stored.fingerprint, target)
+            if reason is not None:  # the same reason the save hook gives
+                message = f"{cit.raw} changed after this memory was written: {reason}."
+            elif stored.fingerprint.kind == "dir":  # name the files: compare gives one state
                 changes = directory_changes(stored.fingerprint, target)
                 where = f" ({', '.join(changes)})" if changes else ""
                 message = f"{cit.raw} changed after this memory was written{where}."
