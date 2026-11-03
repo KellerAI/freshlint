@@ -25,6 +25,7 @@ from freshlint.fingerprint import (
     GONE,
     TargetMissing,
     compare,
+    directory_problem,
     is_missing,
     level_note,
     take,
@@ -95,6 +96,11 @@ def on_save(
                     f"{note.name} cites {cit.raw}, but that file does not exist. "
                     "Cite a file that exists, or remove the citation."
                 )
+            continue
+        if path.is_dir():  # a directory has no fingerprint: name the problem, not a read
+            problem = directory_problem(cit.path)
+            outcome.feedback.append(f"{note.name} cites {cit.raw}, but {problem}.")
+            kept[cit.raw] = _keep(old, f"missing:{problem}")
             continue
         if seen is None:
             if old is None or old.fingerprint is None:

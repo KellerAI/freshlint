@@ -118,6 +118,11 @@ def file_digest(text: str) -> str:
     return _sha("\n".join(normalize(text)))
 
 
+def directory_problem(cited: str) -> str:
+    """What is wrong with citing a directory, in the words every report uses."""
+    return f"{cited} is a directory; cite a file inside it"
+
+
 def is_missing(path: Path) -> bool:
     """Whether ``path`` is cleanly absent; an access error is not "missing"."""
     try:
@@ -231,7 +236,7 @@ def take(cit: Citation, path: Path) -> Fingerprint:
         raise _Unreadable(f"{cit.path} cannot be read")
     if text is None and large is None:
         if path.is_dir():
-            raise TargetMissing(f"{cit.path} is a directory; cite a file inside it")
+            raise TargetMissing(directory_problem(cit.path))
         raise TargetMissing(f"{cit.path} does not exist")
     if large is not None:
         return Fingerprint(cit.kind, large, fallback=cit.kind != "file")

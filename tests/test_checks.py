@@ -12,6 +12,8 @@ from freshlint import checks, coverage, gitio, infer
 from freshlint.checks import Context, scan
 from freshlint.evidence import parse_citation, resolve
 from freshlint.fingerprint import take
+from freshlint.memory import read_note
+from freshlint.save import on_save
 from freshlint.store import CitationRecord, NoteRecord, Store, load_store, save_store
 
 
@@ -902,3 +904,19 @@ def test_scans_cut_short_in_a_repository_with_merges_end_as_one_unlimited_scan_w
         )  # the same baselines, none lost or doubled
         assert len(record.inferred) == 4
         assert cut.notes[name].inferred_key == record.inferred_key
+
+
+def test_a_directory_cited_at_save_is_reported_as_a_directory_at_session_start(claude_project):
+    claude_project.write("src/a.py", "x\n")
+    note = read_note(claude_project.note("a.md", "**Evidence:** `src`"))
+    store = Store()
+    on_save(note, store, {}, ctx_for(claude_project), dt.date(2026, 10, 1))
+    result = scan(claude_project.memory, ctx_for(claude_project), store)
+    assert [(f.state, f.message) for f in result.findings] == [
+        (
+            "unread",
+            "cites src, but when the memory was saved src is a directory; cite a file inside "
+            "it, so it was never fingerprinted.",
+        )
+    ]
+    assert "not read" not in result.findings[0].message
