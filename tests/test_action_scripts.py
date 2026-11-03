@@ -277,7 +277,7 @@ def curl_shim(tmp_path):
     log = tmp_path / "curl-argv.jsonl"
     shim = shim_dir / "curl"
     shim.write_text(
-        f"#!{sys.executable}\n"
+        f"#!{sys.executable} -I\n"
         "import json, os, stat, sys\n"
         "argv = sys.argv[1:]\n"
         "headers = {}\n"
@@ -285,7 +285,9 @@ def curl_shim(tmp_path):
         "    if flag == '-H' and value.startswith('@'):\n"
         "        headers[value[1:]] = oct(stat.S_IMODE(os.stat(value[1:]).st_mode))\n"
         f"with open({str(log)!r}, 'a') as handle:\n"
-        "    handle.write(json.dumps({'argv': argv, 'header_files': headers}) + '\\n')\n"
+        "    oidc = sorted(k for k in os.environ if k.startswith('ACTIONS_ID_TOKEN'))\n"
+        "    handle.write(json.dumps({'argv': argv, 'header_files': headers, 'oidc_env': oidc})"
+        " + '\\n')\n"
         f"os.execv({real!r}, [{real!r}] + argv)\n"
     )
     shim.chmod(0o755)
@@ -298,6 +300,9 @@ def upload(tmp_path, cwd, server, **overrides):
     runner_temp.mkdir(exist_ok=True)
     env = env_for(FL_MODE="diff", FL_BASE="HEAD~1", FL_HEAD="HEAD")
     env.pop("FL_FORMAT")
+    # No PYTHONPATH: the script runs Python in isolated mode, so freshlint must resolve from
+    # the installed package, as it does after the action's pip install.
+    env.pop("PYTHONPATH")
     env.update(GITHUB)
     env.update(
         {
@@ -352,7 +357,9 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
     body = (server.bodies / posts[0]["body_file"]).read_text()
     assert MARKER not in body
     payload = json.loads(body)
-    Draft202012Validator(SCHEMA).validate(payload)
+    Draft202012Validator(SCHEMA, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(
+        payload
+    )
     assert payload["repo"] == GITHUB["GITHUB_REPOSITORY"]
     assert payload["mode"] == "diff"
 
@@ -383,6 +390,7 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
             assert Path(path).parent.parent == runner_temp
             assert mode == "0o600"
     assert [c["argv"].count("--data-binary") for c in calls] == [0, 1]
+    assert [c["oidc_env"] for c in calls] == [[], []]  # removed before any child starts
     assert "--retry" not in " ".join(calls[1]["argv"])
 
     # The temporary directory with the header files is gone.
@@ -481,3 +489,45 @@ def test_there_are_acme_goldens_for_both_outcomes():
     assert {p.stem for p in ACME_GOLDENS} == {
         f"acme-{fmt}-{day}" for fmt in ("github", "text") for day in ("2026-09-30", "2026-12-31")
     }
+
+
+HOSTILE_MODULES = {
+    "freshlint/__init__.py": "freshlint",
+    "json.py": "json",
+    "urllib/__init__.py": "urllib",
+    "re.py": "re",
+    "argparse.py": "argparse",
+    "sitecustomize.py": "sitecustomize",
+}
+
+
+def plant_hostile_modules(workdir, canaries):
+    """Modules in the customer's checkout that write a canary file when imported."""
+    for rel, name in HOSTILE_MODULES.items():
+        target = workdir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "import os\n"
+            f"with open({str(canaries / name)!r}, 'w') as handle:\n"
+            "    handle.write(repr(sorted(os.environ)))\n"
+        )
+
+
+@needs_bash
+@needs_curl
+def test_upload_never_imports_code_from_the_checkout(tmp_path, server):
+    workdir = build_marker_repo(tmp_path / "hostile-repo")
+    canaries = tmp_path / "canaries"
+    canaries.mkdir()
+    plant_hostile_modules(workdir, canaries)
+
+    # Positive control: plain Python in that directory does import the planted json.py.
+    subprocess.run([sys.executable, "-c", "import json"], cwd=workdir, check=True)
+    assert (canaries / "json").exists()
+    (canaries / "json").unlink()
+
+    proc, calls, _ = upload(tmp_path, workdir, server, PYTHONPATH=str(workdir))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert list(canaries.iterdir()) == []
+    assert [r["method"] for r in server.requests()] == ["GET", "POST"]
+    assert [c["oidc_env"] for c in calls] == [[], []]

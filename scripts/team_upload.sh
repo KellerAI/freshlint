@@ -3,13 +3,19 @@
 # workflow sets `team: true`; with the default `team: false` this file is never executed.
 #
 # It runs the same check as the "Run freshlint" step (same arguments from build_args.sh, with
-# --format json), turns the report into a payload with `python -m freshlint.team_payload`
+# --format json), turns the report into a payload with `python -I -m freshlint.team_payload`
 # (paths, rule ids, counts and static rule summaries; never file contents, finding messages
 # or hints), requests a GitHub Actions OIDC token, and sends exactly one POST to FL_TEAM_URL.
 #
 # The token is masked as soon as it is read, is written only to a 0600 header file under
 # RUNNER_TEMP that curl reads with -H @file, and never appears on a command line. The
 # temporary directory is removed on exit.
+#
+# This runs in the customer's checkout, so nothing here may execute code from it: every
+# Python call uses isolated mode (-I: the working directory is not on sys.path, PYTHON*
+# variables and the user site are ignored), and the runner's OIDC request variables are
+# removed from the environment before any child process starts. The one curl that requests
+# the token gets the URL as an argument and the request token through a header file.
 #
 # Inputs (environment): the FL_* variables build_args.sh reads, FL_TEAM_URL, FL_TEAM_AUDIENCE,
 # ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN (set by the runner when the
@@ -20,12 +26,16 @@ set -euo pipefail
 notice() { echo "::notice title=freshlint team::$1"; }
 warn() { echo "::warning title=freshlint team::$1"; }
 
-if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+oidc_request_token="${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
+if [[ -z "$oidc_url" || -z "$oidc_request_token" ]]; then
   notice "upload skipped: no GitHub OIDC token is available (fork pull requests and Dependabot runs get none; other workflows need 'permissions: id-token: write'). The check result is unchanged."
   exit 0
 fi
 
-if ! python - <<'PY'; then
+if ! python -I - <<'PY'; then
 import os
 import sys
 from urllib.parse import urlsplit
@@ -66,35 +76,35 @@ args=()
 while IFS= read -r -d '' arg; do args+=("$arg"); done <"$tmp/args"
 
 status=0
-freshlint "${args[@]}" >"$tmp/report.json" 2>/dev/null || status=$?
+python -I -m freshlint "${args[@]}" >"$tmp/report.json" 2>/dev/null || status=$?
 if [[ "$status" -gt 1 ]]; then
   warn "upload skipped: freshlint check exited $status (see the Run freshlint step)."
   exit 1
 fi
 
 # 2. The payload: a pure transform with no network code.
-if ! python -m freshlint.team_payload <"$tmp/report.json" >"$tmp/payload.json"; then
+if ! python -I -m freshlint.team_payload <"$tmp/report.json" >"$tmp/payload.json"; then
   warn "upload skipped: could not build the upload payload."
   exit 1
 fi
 
 # 3. The OIDC token. The runner's request token also goes in a header file, not on argv.
-audience="$(python -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ.get("FL_TEAM_AUDIENCE", ""), safe=""))')"
+audience="$(python -I -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ.get("FL_TEAM_AUDIENCE", ""), safe=""))')"
 if [[ -z "$audience" ]]; then
   warn "upload skipped: team-audience is empty."
   exit 1
 fi
-printf 'Authorization: Bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >"$tmp/request-header"
+printf 'Authorization: Bearer %s\n' "$oidc_request_token" >"$tmp/request-header"
 if ! curl -sS --fail --max-time 30 --max-redirs 0 --proto '=http,https' \
   -H @"$tmp/request-header" -o "$tmp/token.json" \
-  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}"; then
+  "${oidc_url}&audience=${audience}"; then
   warn "upload skipped: could not get a GitHub OIDC token. The check result is unchanged."
   exit 1
 fi
 rm -f "$tmp/request-header"
 
 if ! token="$(
-  python - "$tmp/token.json" <<'PY'
+  python -I - "$tmp/token.json" <<'PY'
 import json
 import re
 import sys

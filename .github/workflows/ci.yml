@@ -160,7 +160,7 @@ jobs:
           from jsonschema import Draft202012Validator
           schema = json.loads(Path("../../schemas/team-run-v1.schema.json").read_text())
           payload = json.load(open(sys.argv[1]))
-          Draft202012Validator(schema).validate(payload)
+          Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(payload)
           print(f"ok: transform payload valid, {len(payload['findings'])} findings")
           PY
           cd "$GITHUB_WORKSPACE"
@@ -246,8 +246,22 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install ".[dev]"
-      - name: Build the marker repository
-        run: python tests/team_support.py marker-repo "$RUNNER_TEMP/marker-repo"
+      - name: Build the marker repository, with hostile Python modules in it
+        run: |
+          set -euo pipefail
+          python tests/team_support.py marker-repo "$RUNNER_TEMP/marker-repo"
+          # Regression test: the upload runs in the customer's checkout, so modules there that
+          # shadow freshlint or the stdlib must never be imported. Each writes a canary.
+          mkdir -p "$RUNNER_TEMP/canaries"
+          for rel in freshlint/__init__.py json.py urllib/__init__.py re.py sitecustomize.py; do
+            mkdir -p "$(dirname "$RUNNER_TEMP/marker-repo/$rel")"
+            printf 'open(%s, "w").write("imported")\n' \
+              "'$RUNNER_TEMP/canaries/${rel//\//_}'" >"$RUNNER_TEMP/marker-repo/$rel"
+          done
+          # Positive control: plain Python in that directory imports the planted json.py.
+          (cd "$RUNNER_TEMP/marker-repo" && python -c 'import json')
+          test -f "$RUNNER_TEMP/canaries/json.py"
+          rm "$RUNNER_TEMP/canaries/json.py"
 
       - name: Start the mock OIDC and ingest server
         id: recorder
@@ -313,7 +327,7 @@ jobs:
           body = (temp / "bodies" / posts[0]["body_file"]).read_text()
           schema = json.loads(Path("schemas/team-run-v1.schema.json").read_text())
           payload = json.loads(body)
-          Draft202012Validator(schema).validate(payload)
+          Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(payload)
           assert MARKER not in body.lower()
           check = subprocess.run(
               ["freshlint", "check", "--format", "json", "--today", "2026-09-30",
@@ -332,6 +346,12 @@ jobs:
           assert os.environ["OUTCOME"] == "failure", os.environ["OUTCOME"]
           print("ok: the check result is unchanged (failure: the marker repo has errors)")
           PY
+          if [[ -n "$(ls -A "$RUNNER_TEMP/canaries")" ]]; then
+            ls -l "$RUNNER_TEMP/canaries"
+            echo "::error::the upload imported Python code from the checked-out repository"
+            exit 1
+          fi
+          echo "ok: no module from the checkout was imported (no canary file)"
           if ls "$RUNNER_TEMP"/freshlint-team.* >/dev/null 2>&1; then
             echo "::error::the upload left files in RUNNER_TEMP"
             exit 1
@@ -410,11 +430,17 @@ jobs:
             [team-on]="the check result is unchanged"
             [team-fork]="both runs failed the check the same way"
           )
+          # Raw logs contain terminal escapes, which gh api refuses to print: use curl, with the
+          # job's own token in a header file. curl drops it on the redirect to log storage.
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$GH_TOKEN" >"$RUNNER_TEMP/gh-auth"
           for name in team-on team-fork; do
             id="$(awk -F'\t' -v n="$name" '$2 == n {print $1}' <<<"$jobs")"
             test -n "$id"
             for _ in $(seq 20); do
-              if gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" >"$RUNNER_TEMP/$name.log" \
+              if curl -sSfL -H @"$RUNNER_TEMP/gh-auth" -H "Accept: application/vnd.github+json" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" \
+                -o "$RUNNER_TEMP/$name.log" \
                 && grep -qF "${done_text[$name]}" "$RUNNER_TEMP/$name.log"; then
                 break
               fi
