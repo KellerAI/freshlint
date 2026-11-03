@@ -4,12 +4,15 @@
 based on, tells the agent at session start which memories rest on code that has changed or
 gone, and pushes back when the agent saves a memory that claims certainty without evidence.
 
-It runs as a Claude Code plugin, a CLI, or a CI check. It is deterministic, makes no network
-requests, never stores your code (only hashes), and has no runtime dependencies beyond
-Python 3.11. It uses `git` when it is available (to see what an older memory's files looked like
-and when a note was written) and works without it, using file modification times instead.
+It runs as a Claude Code plugin, a CLI, or a CI check. It is deterministic, never stores your
+code (only hashes), and has no runtime dependencies beyond Python 3.11. The CLI and the plugin
+never make network requests. The GitHub Action uploads a run summary (paths, rule ids, counts
+and static rule summaries, never file contents) only when you set
+[`team: true`](#freshlint-team-opt-in). It uses `git` when it is available (to see what an
+older memory's files looked like and when a note was written) and works without it, using file
+modification times instead.
 
-> Status: v0.2.0, early release, open to feedback.
+> Status: v0.3.0, early release, open to feedback.
 
 ## Why
 
@@ -693,6 +696,43 @@ The hook runs `freshlint check --staged`. See
 `freshlint check --diff BASE...HEAD`; on other events (for example a weekly schedule)
 it runs a full scan. Diff mode needs history, so check out with `fetch-depth: 0`. See
 [`examples/github-workflow.yml`](examples/github-workflow.yml).
+
+#### freshlint Team (opt-in)
+
+With `team: true` the action also uploads a summary of each run to freshlint Team. The
+default is `team: false`: the action then makes no request beyond installing freshlint, and
+its output is the same as in v0.2.0.
+
+```yaml
+permissions:
+  contents: read
+  id-token: write # the upload authenticates with a GitHub Actions OIDC token; no API key
+
+jobs:
+  freshlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: KellerAI/freshlint@v0.3.0
+        with:
+          team: true
+          team-url: <the ingest URL freshlint Team gives you>
+```
+
+* **What is sent:** the repository id and name, the commit SHA, the run time, the freshlint
+  version, the mode, the error, warning and file counts, and per finding the file path, line,
+  rule id, severity and that rule's static summary from the catalog. Finding messages and
+  hints are never sent, because they can quote note text, and neither is any file content.
+  [`schemas/team-run-v1.schema.json`](schemas/team-run-v1.schema.json) is the contract.
+* **How:** after the check, a separate step reruns it with the same arguments and
+  `--format json`, turns the report into the payload (`python -m freshlint.team_payload`),
+  requests an OIDC token for `team-audience` (default `freshlint-team`) and sends one POST.
+  The token is masked and never put on a command line.
+* **When there is no token** (fork pull requests, Dependabot, or a workflow without
+  `id-token: write`) the step prints one notice and skips the upload.
+* **The check result never changes:** the upload step cannot fail the job.
 
 #### Anything else
 

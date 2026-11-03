@@ -13,7 +13,19 @@ Please include the freshlint version, how you ran it, and a minimal reproduction
 - freshlint reads markdown, TOML and JSON files, the files that memory notes cite, and git
   objects. It never executes content from them, and it never modifies a memory note, a cited
   file or a checked document.
-- It makes no network requests.
+- The CLI and the Claude Code plugin never make network requests.
+- Apart from installing Python and freshlint (`actions/setup-python` and `pip`), the composite
+  GitHub Action makes no network request unless the workflow sets `team: true`. Then, after
+  the check, it requests a GitHub Actions OIDC token and sends one POST to `team-url` with a
+  run summary: file paths, line numbers, rule ids, severities, counts and the static rule
+  summaries from the catalog. It never sends file contents, finding
+  messages or hints, which can quote note text (`python -m freshlint.team_payload` builds the
+  body; `schemas/team-run-v1.schema.json` is its contract). The token is masked, kept off
+  command lines in a 0600 header file under `RUNNER_TEMP`, and deleted after the request.
+  The upload never runs code from the checked-out repository: its Python calls use isolated
+  mode (`python -I`, so the working directory is not on `sys.path`), and the runner's
+  `ACTIONS_ID_TOKEN_REQUEST_*` variables are removed from the environment before any child
+  process starts.
 - Git is invoked through `subprocess` with an argument list (no shell), with
   `GIT_OPTIONAL_LOCKS=0`, and only with subcommands that do not change content (`rev-parse`,
   `ls-files`, `show`, `diff`, `merge-base`, `log`, `rev-list`, `cat-file`, `check-ignore`,

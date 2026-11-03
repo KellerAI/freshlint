@@ -44,6 +44,24 @@ inputs:
     description: Python version used to run freshlint.
     required: false
     default: "3.12"
+  team:
+    description: >-
+      Opt in to freshlint Team ("true" or "false"). When "true", after the check the action
+      uploads a run summary (file paths, line numbers, rule ids, counts and static rule
+      summaries; never file contents or finding messages) to team-url, authenticated with a
+      GitHub Actions OIDC token. Needs "permissions: id-token: write". When "false" (the
+      default) the upload step does not run: nothing is uploaded and no request is made.
+    required: false
+    default: "false"
+  team-url:
+    description: The freshlint Team ingest URL (https). Required when team is "true".
+    required: false
+  team-audience:
+    description: >-
+      Audience of the GitHub OIDC token requested for the upload. The freshlint Team service
+      only accepts tokens issued for this audience; change it only if the service tells you to.
+    required: false
+    default: freshlint-team
 
 runs:
   using: composite
@@ -73,30 +91,24 @@ runs:
         FL_PATHS: ${{ inputs.paths }}
       run: |
         set -euo pipefail
-        mode="$FL_MODE"
-        if [[ "$mode" == "auto" ]]; then
-          if [[ "$FL_EVENT" == pull_request* && -n "$FL_BASE" ]]; then mode="diff"; else mode="full"; fi
-        fi
-        args=(check --format "$FL_FORMAT")
-        case "$mode" in
-          diff)
-            if [[ -z "$FL_BASE" ]]; then
-              echo "::error title=freshlint::diff mode needs a base revision"
-              exit 2
-            fi
-            args+=(--diff "$FL_BASE...$FL_HEAD")
-            ;;
-          staged) args+=(--staged) ;;
-          full) ;;
-          *)
-            echo "::error title=freshlint::unknown mode '$mode'"
-            exit 2
-            ;;
-        esac
-        if [[ "$FL_STRICT" == "true" ]]; then args+=(--strict); fi
-        if [[ -n "$FL_TODAY" ]]; then args+=(--today "$FL_TODAY"); fi
-        if [[ -n "$FL_PATHS" ]]; then
-          read -r -a extra <<<"$FL_PATHS"
-          args+=("${extra[@]}")
-        fi
-        freshlint "${args[@]}"
+        . "$GITHUB_ACTION_PATH/scripts/build_args.sh" "$FL_FORMAT"
+        freshlint "${FRESHLINT_ARGS[@]}"
+
+    # Opt-in only: with the default team: false this step is skipped, so nothing runs and no
+    # network request is made. It never changes the check result (continue-on-error).
+    - name: Upload run summary to freshlint Team
+      if: ${{ !cancelled() && inputs.team == 'true' }}
+      continue-on-error: true
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FL_MODE: ${{ inputs.mode }}
+        FL_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+        FL_HEAD: ${{ inputs.head || github.event.pull_request.head.sha || github.sha }}
+        FL_EVENT: ${{ github.event_name }}
+        FL_STRICT: ${{ inputs.strict }}
+        FL_TODAY: ${{ inputs.today }}
+        FL_PATHS: ${{ inputs.paths }}
+        FL_TEAM_URL: ${{ inputs.team-url }}
+        FL_TEAM_AUDIENCE: ${{ inputs.team-audience }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/team_upload.sh"

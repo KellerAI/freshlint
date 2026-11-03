@@ -7,6 +7,32 @@ renaming or removing one is a breaking change.
 
 ## [Unreleased]
 
+## [0.3.0] - not released yet
+
+### Added
+
+- freshlint Team upload, opt-in, in the composite GitHub Action. New inputs `team` (default
+  `"false"`), `team-url` and `team-audience` (default `freshlint-team`). With `team: true`,
+  a separate step reruns the check with the same arguments and `--format json`, builds a
+  payload with `python -m freshlint.team_payload`, requests a GitHub Actions OIDC token (the
+  workflow needs `permissions: id-token: write`; there is no API key) and sends one POST. The
+  payload holds paths, line numbers, rule ids, severities, counts and the static rule summaries
+  from the catalog; finding messages, hints and file contents are never sent. The token is
+  masked and kept off command lines. Without a token (fork pull requests, Dependabot) the step
+  prints one notice and skips. The step never changes the check result.
+- `schemas/team-run-v1.schema.json` (`freshlint-team-run/1`, JSON Schema 2020-12), the upload
+  contract, with golden fixtures in `tests/fixtures/team/`.
+- `freshlint.team_payload`, a pure, standard-library transform from `freshlint check --format
+  json` output to that payload. It has no network code.
+
+### Changed
+
+- The action's argument-building script moved to `scripts/build_args.sh`, shared by the check
+  and the upload. The check step's output, annotations and exit code are unchanged (a test
+  compares them byte for byte with the v0.2.0 script).
+- The "no network" statements now say what holds: the CLI and the plugin never make network
+  requests; the action uploads a run summary only when you set `team: true`.
+
 ### Fixed
 
 - A citation of a directory is reported as a directory when the note is saved

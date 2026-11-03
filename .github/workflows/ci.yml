@@ -41,8 +41,8 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
 
-      - name: shellcheck the demo and the plugin runner
-        run: shellcheck examples/demo.sh bin/freshlint
+      - name: shellcheck the demo, the plugin runner and the action scripts
+        run: shellcheck examples/demo.sh bin/freshlint scripts/*.sh tests/fixtures/action/*.sh
 
       - name: Demo output matches the README
         run: |
@@ -80,3 +80,394 @@ jobs:
           mode: full
           working-directory: examples/acme-memory
           today: "2026-09-30"
+
+  # FT-3: the opt-in freshlint Team upload. Jobs team-off, team-on and team-fork run the
+  # composite action from this checkout; team-logs reads the finished jobs' full logs.
+
+  team-off:
+    # team unset: the CLI, the transform and the check step make no network request, the
+    # upload step never runs, and the output is byte-identical to the v0.2.0 goldens.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ".[dev]"
+
+      - name: Network-deny wrapper (empty network namespace, syscalls traced)
+        run: |
+          set -euo pipefail
+          command -v strace >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq strace; }
+          # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor by default.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          cat > "$RUNNER_TEMP/deny.sh" <<'SH'
+          #!/usr/bin/env bash
+          # deny.sh TRACE CMD...: run CMD in a new user and network namespace (no interfaces up,
+          # so no route anywhere) and record its socket syscalls, and its children's, in TRACE.
+          trace="$1"
+          shift
+          exec unshare -rn -- strace -f -qq -o "$trace" -e trace=socket,connect,sendto,sendmsg -- "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/deny.sh"
+          # Positive control: inside the wrapper a connection attempt fails and is traced.
+          if "$RUNNER_TEMP/deny.sh" "$RUNNER_TEMP/control.trace" \
+            python -c 'import socket; socket.create_connection(("140.82.112.3", 443), timeout=5)'; then
+            echo "::error::the network-deny wrapper let a connection through"
+            exit 1
+          fi
+          grep -q 'AF_INET' "$RUNNER_TEMP/control.trace"
+          grep -q 'ENETUNREACH' "$RUNNER_TEMP/control.trace"
+          echo "wrapper ok: a connection attempt was traced and refused"
+
+      - name: Check step, transform and demo under the wrapper match the goldens
+        env:
+          GITHUB_ACTION_PATH: ${{ github.workspace }}
+          FL_MODE: full
+          FL_BASE: ""
+          FL_HEAD: ""
+          FL_EVENT: push
+          FL_STRICT: "false"
+          FL_PATHS: ""
+        run: |
+          set -euo pipefail
+          deny="$RUNNER_TEMP/deny.sh"
+          golden="$GITHUB_WORKSPACE/tests/fixtures/action"
+          # shellcheck disable=SC2016 # expanded by the inner bash, as in action.yml
+          step='set -euo pipefail; . "$GITHUB_ACTION_PATH/scripts/build_args.sh" "$FL_FORMAT"; freshlint "${FRESHLINT_ARGS[@]}"'
+          cd examples/acme-memory
+          for day in 2026-09-30 2026-12-31; do
+            for fmt in github text; do
+              code=0
+              FL_TODAY="$day" FL_FORMAT="$fmt" "$deny" "$RUNNER_TEMP/check-$fmt-$day.trace" \
+                bash -c "$step" >"$RUNNER_TEMP/out.txt" || code=$?
+              want=0
+              if [[ "$day" == 2026-12-31 ]]; then want=1; fi
+              test "$code" -eq "$want"
+              diff -u "$golden/acme-$fmt-$day.txt" "$RUNNER_TEMP/out.txt"
+              echo "ok: check step $fmt $day exit $code, byte-identical to the v0.2.0 golden"
+            done
+          done
+          code=0
+          FL_TODAY=2026-12-31 FL_FORMAT=json "$deny" "$RUNNER_TEMP/check-json.trace" \
+            bash -c "$step" >"$RUNNER_TEMP/report.json" || code=$?
+          test "$code" -eq 1
+          "$deny" "$RUNNER_TEMP/transform.trace" python -m freshlint.team_payload \
+            <"$RUNNER_TEMP/report.json" >"$RUNNER_TEMP/payload.json"
+          python - "$RUNNER_TEMP/payload.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+          schema = json.loads(Path("../../schemas/team-run-v1.schema.json").read_text())
+          payload = json.load(open(sys.argv[1]))
+          Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(payload)
+          print(f"ok: transform payload valid, {len(payload['findings'])} findings")
+          PY
+          cd "$GITHUB_WORKSPACE"
+          "$deny" "$RUNNER_TEMP/demo.trace" examples/demo.sh >"$RUNNER_TEMP/demo.txt"
+          diff -u examples/demo-output.txt "$RUNNER_TEMP/demo.txt"
+          echo "ok: demo output byte-identical to its golden"
+          "$deny" "$RUNNER_TEMP/pytest.trace" python -m pytest -q -p no:cacheprovider \
+            tests/test_team_payload.py tests/test_action_scripts.py -k "not upload"
+
+      - name: No traced process opened an internet socket
+        run: |
+          set -euo pipefail
+          traces=("$RUNNER_TEMP"/check-*.trace "$RUNNER_TEMP"/transform.trace "$RUNNER_TEMP"/demo.trace "$RUNNER_TEMP"/pytest.trace)
+          ls -l "${traces[@]}"
+          if grep -H -E 'AF_INET|sin_port|sin6_port' "${traces[@]}"; then
+            echo "::error::an internet socket was opened under the network-deny wrapper"
+            exit 1
+          fi
+          echo "ok: zero AF_INET/AF_INET6 socket or connect calls in ${#traces[@]} traces"
+
+      - name: Start a recorder for any OIDC or upload request
+        id: recorder
+        run: |
+          set -euo pipefail
+          nohup python tests/team_support.py serve --port-file "$RUNNER_TEMP/port" \
+            --log "$RUNNER_TEMP/requests.jsonl" --bodies "$RUNNER_TEMP/bodies" \
+            >"$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 100); do [[ -s "$RUNNER_TEMP/port" ]] && break; sleep 0.1; done
+          port="$(cat "$RUNNER_TEMP/port")"
+          echo "url=http://127.0.0.1:$port" >>"$GITHUB_OUTPUT"
+          # This job only: fake the runner's OIDC variables, so an upload step that ran by
+          # mistake would reach the recorder.
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=http://127.0.0.1:$port/token?api-version=2.0" >>"$GITHUB_ENV"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=fake-runtime-request-token" >>"$GITHUB_ENV"
+
+      - name: Composite action, team unset, passing check
+        id: passing
+        uses: ./
+        with:
+          mode: full
+          working-directory: examples/acme-memory
+          today: "2026-09-30"
+          team-url: ${{ steps.recorder.outputs.url }}/ingest
+
+      - name: Composite action, team "false", failing check
+        id: failing
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: full
+          working-directory: examples/acme-memory
+          today: "2026-12-31"
+          team: "false"
+          team-url: ${{ steps.recorder.outputs.url }}/ingest
+
+      - name: The upload step never ran, and the check results are unchanged
+        env:
+          PASSING: ${{ steps.passing.outcome }}
+          FAILING: ${{ steps.failing.outcome }}
+          URL: ${{ steps.recorder.outputs.url }}
+        run: |
+          set -euo pipefail
+          test "$PASSING" = success
+          test "$FAILING" = failure
+          if [[ -s "$RUNNER_TEMP/requests.jsonl" ]]; then
+            cat "$RUNNER_TEMP/requests.jsonl"
+            echo "::error::the action made a request with team unset or false"
+            exit 1
+          fi
+          echo "ok: zero requests reached the OIDC or ingest recorder"
+          # Positive control: the recorder does record a request.
+          curl -s -o /dev/null "$URL/control"
+          test "$(wc -l <"$RUNNER_TEMP/requests.jsonl")" -eq 1
+
+  team-on:
+    # team: true against a mock OIDC endpoint and a mock ingest server.
+    runs-on: ubuntu-latest
+    env:
+      FAKE_OIDC_SEED: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ".[dev]"
+      - name: Build the marker repository, with hostile Python modules in it
+        run: |
+          set -euo pipefail
+          python tests/team_support.py marker-repo "$RUNNER_TEMP/marker-repo"
+          # Regression test: the upload runs in the customer's checkout, so modules there that
+          # shadow freshlint or the stdlib must never be imported. Each writes a canary.
+          mkdir -p "$RUNNER_TEMP/canaries"
+          for rel in freshlint/__init__.py json.py urllib/__init__.py re.py sitecustomize.py; do
+            mkdir -p "$(dirname "$RUNNER_TEMP/marker-repo/$rel")"
+            printf 'open(%s, "w").write("imported")\n' \
+              "'$RUNNER_TEMP/canaries/${rel//\//_}'" >"$RUNNER_TEMP/marker-repo/$rel"
+          done
+          # Positive control: plain Python in that directory imports the planted json.py.
+          (cd "$RUNNER_TEMP/marker-repo" && python -c 'import json')
+          test -f "$RUNNER_TEMP/canaries/json.py"
+          rm "$RUNNER_TEMP/canaries/json.py"
+
+      - name: Start the mock OIDC and ingest server
+        id: recorder
+        run: |
+          set -euo pipefail
+          nohup python tests/team_support.py serve --port-file "$RUNNER_TEMP/port" \
+            --log "$RUNNER_TEMP/requests.jsonl" --bodies "$RUNNER_TEMP/bodies" \
+            >"$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 100); do [[ -s "$RUNNER_TEMP/port" ]] && break; sleep 0.1; done
+          port="$(cat "$RUNNER_TEMP/port")"
+          echo "url=http://127.0.0.1:$port" >>"$GITHUB_OUTPUT"
+          # This job only: point the runner's OIDC variables at the mock endpoint.
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=http://127.0.0.1:$port/token?api-version=2.0" >>"$GITHUB_ENV"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=fake-runtime-request-token" >>"$GITHUB_ENV"
+
+      - name: Sample every command line while the action runs
+        run: |
+          # shellcheck disable=SC2016 # expanded by the inner bash
+          nohup bash -c 'while :; do ps -eww -o args= >>"$RUNNER_TEMP/argv.log"; sleep 0.01; done' \
+            >/dev/null 2>&1 &
+          echo $! >"$RUNNER_TEMP/sampler.pid"
+
+      - name: Composite action, team true, diff of the marker repository
+        id: action
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: diff
+          base: HEAD~1
+          head: HEAD
+          working-directory: ${{ runner.temp }}/marker-repo
+          today: "2026-09-30"
+          team: true
+          team-url: ${{ steps.recorder.outputs.url }}/ingest
+
+      - name: Stop sampling
+        run: kill "$(cat "$RUNNER_TEMP/sampler.pid")"
+
+      - name: One token request, exactly one POST, no marker, no token on any command line
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+          sys.path.insert(0, "tests")
+          from team_support import AUDIENCE, MARKER, fake_oidc_token
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          token = fake_oidc_token(os.environ["FAKE_OIDC_SEED"])
+          requests = [json.loads(x) for x in (temp / "requests.jsonl").read_text().splitlines()]
+          gets = [r for r in requests if r["method"] == "GET"]
+          posts = [r for r in requests if r["method"] == "POST"]
+          assert len(requests) == 2, requests
+          assert len(gets) == 1 and gets[0]["path"] == "/token", gets
+          assert gets[0]["audience"] == AUDIENCE and gets[0]["request_token_ok"], gets
+          assert len(posts) == 1, posts
+          assert posts[0]["path"] == "/ingest" and posts[0]["token_ok"], posts
+          print("ok: one OIDC token request and exactly one POST, with the token")
+
+          body = (temp / "bodies" / posts[0]["body_file"]).read_text()
+          schema = json.loads(Path("schemas/team-run-v1.schema.json").read_text())
+          payload = json.loads(body)
+          Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(payload)
+          assert MARKER not in body.lower()
+          check = subprocess.run(
+              ["freshlint", "check", "--format", "json", "--today", "2026-09-30",
+               "--diff", "HEAD~1...HEAD"],
+              cwd=temp / "marker-repo", capture_output=True, text=True,
+          )
+          report = json.loads(check.stdout)
+          assert MARKER in check.stdout  # positive control: the CLI messages echo it
+          assert payload["summary"] == report["summary"], (payload["summary"], report["summary"])
+          print(f"ok: body valid, marker absent, {len(payload['findings'])} findings")
+
+          argv = (temp / "argv.log").read_text()
+          assert "team_upload.sh" in argv or "curl" in argv, "the sampler saw nothing"
+          assert token not in argv
+          print(f"ok: token absent from {argv.count(chr(10))} sampled command lines")
+          assert os.environ["OUTCOME"] == "failure", os.environ["OUTCOME"]
+          print("ok: the check result is unchanged (failure: the marker repo has errors)")
+          PY
+          if [[ -n "$(ls -A "$RUNNER_TEMP/canaries")" ]]; then
+            ls -l "$RUNNER_TEMP/canaries"
+            echo "::error::the upload imported Python code from the checked-out repository"
+            exit 1
+          fi
+          echo "ok: no module from the checkout was imported (no canary file)"
+          if ls "$RUNNER_TEMP"/freshlint-team.* >/dev/null 2>&1; then
+            echo "::error::the upload left files in RUNNER_TEMP"
+            exit 1
+          fi
+
+  team-fork:
+    # team: true with no OIDC token, as on a fork pull request or a Dependabot run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start a recorder for any OIDC or upload request
+        id: recorder
+        run: |
+          set -euo pipefail
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"  # the job has no id-token permission
+          nohup python tests/team_support.py serve --port-file "$RUNNER_TEMP/port" \
+            --log "$RUNNER_TEMP/requests.jsonl" --bodies "$RUNNER_TEMP/bodies" \
+            >"$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 100); do [[ -s "$RUNNER_TEMP/port" ]] && break; sleep 0.1; done
+          echo "url=http://127.0.0.1:$(cat "$RUNNER_TEMP/port")" >>"$GITHUB_OUTPUT"
+
+      - name: Composite action, team true, failing check
+        id: with_team
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: full
+          working-directory: examples/acme-memory
+          today: "2026-12-31"
+          team: true
+          team-url: ${{ steps.recorder.outputs.url }}/ingest
+
+      - name: Composite action, team unset, same check
+        id: without_team
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: full
+          working-directory: examples/acme-memory
+          today: "2026-12-31"
+
+      - name: Same check result, and no request
+        env:
+          WITH_TEAM: ${{ steps.with_team.outcome }}
+          WITHOUT_TEAM: ${{ steps.without_team.outcome }}
+        run: |
+          set -euo pipefail
+          test "$WITH_TEAM" = failure
+          test "$WITHOUT_TEAM" = failure
+          test ! -s "$RUNNER_TEMP/requests.jsonl"
+          echo "ok: both runs failed the check the same way; zero requests"
+
+  team-logs:
+    # The full logs of team-on and team-fork: no OIDC token anywhere, exactly one notice.
+    needs: [team-on, team-fork]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      FAKE_OIDC_SEED: ${{ github.run_id }}-${{ github.run_attempt }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the full logs of the team jobs
+        run: |
+          set -euo pipefail
+          jobs="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq '.jobs[] | [.id, .name] | @tsv')"
+          # Each log must contain its job's last assertion before it counts as complete.
+          declare -A done_text=(
+            [team-on]="the check result is unchanged"
+            [team-fork]="both runs failed the check the same way"
+          )
+          # Raw logs contain terminal escapes, which gh api refuses to print: use curl, with the
+          # job's own token in a header file. curl drops it on the redirect to log storage.
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$GH_TOKEN" >"$RUNNER_TEMP/gh-auth"
+          for name in team-on team-fork; do
+            id="$(awk -F'\t' -v n="$name" '$2 == n {print $1}' <<<"$jobs")"
+            test -n "$id"
+            for _ in $(seq 20); do
+              if curl -sSfL -H @"$RUNNER_TEMP/gh-auth" -H "Accept: application/vnd.github+json" \
+                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" \
+                -o "$RUNNER_TEMP/$name.log" \
+                && grep -qF "${done_text[$name]}" "$RUNNER_TEMP/$name.log"; then
+                break
+              fi
+              sleep 6
+            done
+            grep -qF "${done_text[$name]}" "$RUNNER_TEMP/$name.log"
+            echo "$name: $(wc -l <"$RUNNER_TEMP/$name.log") log lines"
+          done
+      - name: No token in the team-on log, one notice in the team-fork log
+        run: |
+          python - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "tests")
+          from team_support import fake_oidc_token
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          token = fake_oidc_token(os.environ["FAKE_OIDC_SEED"])
+          on = (temp / "team-on.log").read_text(errors="replace")
+          assert "freshlint team: uploaded the run summary (HTTP 202)" in on, "upload not in log"
+          for part in [token, *token.split(".")]:
+              assert part not in on, "the OIDC token (or part of it) is in the team-on log"
+          print("ok: the OIDC token is not in the full team-on log")
+
+          fork = (temp / "team-fork.log").read_text(errors="replace")
+          notice = "upload skipped: no GitHub OIDC token is available"
+          lines = [line for line in fork.splitlines() if notice in line]
+          assert len(lines) == 1, lines
+          print("ok: exactly one notice in the full team-fork log")
+          PY

@@ -36,8 +36,10 @@ FRESHLINT_CMD="python -m freshlint" PYTHONPATH=src examples/demo.sh > examples/d
 ## Conventions
 
 - **No runtime dependencies.** Standard library only; pytest and ruff are dev-only.
-- **Deterministic and offline.** No network access, no clock reads except the default for
-  `--today`, sorted output.
+- **Deterministic and offline.** The CLI and the plugin never access the network; no clock
+  reads except the default for `--today`, sorted output. The only network code is the
+  composite action's opt-in upload (`team: true`, `scripts/team_upload.sh`); the payload
+  transform it uses (`freshlint.team_payload`) is pure and sends nothing.
 - **Read-only.** freshlint never writes to the files or repositories it checks.
 - **Stable rule IDs.** Renaming or removing a rule is a breaking change. A new rule needs an
   entry in `src/freshlint/catalog.py`, tests, `docs/rules/<rule-id>.md`, a README rule-table

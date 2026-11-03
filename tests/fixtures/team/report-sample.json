@@ -1,0 +1,47 @@
+{
+  "tool": "freshlint",
+  "version": "0.3.0",
+  "schema": 1,
+  "mode": "diff",
+  "range": "origin/zqx-leak-4e1f...HEAD",
+  "today": "2026-09-30",
+  "summary": {
+    "errors": 3,
+    "warnings": 1,
+    "files": 2
+  },
+  "findings": [
+    {
+      "rule": "freshness-laundering",
+      "severity": "error",
+      "path": "context/company.md",
+      "line": 8,
+      "message": "Section \"zqx-leak-4e1f pricing\" claims re-verification (verified 2026-01-01 -> 2026-03-01) but its content is unchanged",
+      "hint": "if you re-checked it without editing, record a receipt in VERIFICATIONS.md:\n- 2026-03-01 verified context/company.md#zqx-leak-4e1f-pricing — <what you checked it against>"
+    },
+    {
+      "rule": "invalid-marker",
+      "severity": "error",
+      "path": "context/company.md",
+      "line": 20,
+      "message": "verified=zqx-leak-4e1f is not an ISO date (YYYY-MM-DD)",
+      "hint": null
+    },
+    {
+      "rule": "temporal-language",
+      "severity": "warning",
+      "path": "context/shipping.md",
+      "line": 4,
+      "message": "relative time phrase \"zqx-leak-4e1f soon\" goes stale silently; anchor it to a date (for example \"as of 2026-09-30\")",
+      "hint": null
+    },
+    {
+      "rule": "some-future-rule",
+      "severity": "error",
+      "path": "context/shipping.md",
+      "line": 12,
+      "message": "zqx-leak-4e1f in a rule this version does not know",
+      "hint": "zqx-leak-4e1f hint"
+    }
+  ]
+}
