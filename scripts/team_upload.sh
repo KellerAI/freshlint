@@ -95,7 +95,7 @@ if [[ -z "$audience" ]]; then
   exit 1
 fi
 printf 'Authorization: Bearer %s\n' "$oidc_request_token" >"$tmp/request-header"
-if ! curl -sS --fail --max-time 30 --max-redirs 0 --proto '=http,https' \
+if ! curl -q --globoff -sS --fail --max-time 30 --max-redirs 0 --proto '=http,https' \
   -H @"$tmp/request-header" -o "$tmp/token.json" \
   "${oidc_url}&audience=${audience}"; then
   warn "upload skipped: could not get a GitHub OIDC token. The check result is unchanged."
@@ -129,7 +129,7 @@ unset token
 
 # 4. Exactly one POST. No retries and no redirects, so the token goes to team-url only.
 code="$(
-  curl -sS --max-time 60 --max-redirs 0 --proto '=http,https' \
+  curl -q --globoff -sS --max-time 60 --max-redirs 0 --proto '=http,https' \
     -H @"$tmp/auth-header" -H 'Content-Type: application/json' \
     --data-binary @"$tmp/payload.json" -o "$tmp/response" -w '%{http_code}' \
     "$FL_TEAM_URL"

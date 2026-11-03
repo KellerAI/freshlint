@@ -12,7 +12,7 @@ and static rule summaries, never file contents) only when you set
 older memory's files looked like and when a note was written) and works without it, using file
 modification times instead.
 
-> Status: v0.2.0, early release, open to feedback.
+> Status: v0.3.0, early release, open to feedback.
 
 ## Why
 
