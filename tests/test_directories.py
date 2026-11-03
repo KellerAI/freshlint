@@ -425,7 +425,7 @@ def test_a_cited_file_that_becomes_a_directory_gives_one_reason_on_save_and_sess
     out = save(project, store, {}, body)
     assert out.feedback == [
         f"a.md rests on {cited}, which changed after this memory was written: {reason}. "
-        "Re-read it before relying on or updating this memory."
+        "Cite a file inside it, or `src/x/`."
     ]
     assert _session_start(project, store)[0][1].endswith(f": {reason}.")
 

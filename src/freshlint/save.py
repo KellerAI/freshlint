@@ -123,10 +123,14 @@ def _save_directory(
             )
             return CitationRecord(None, None, UNREAD + "\n".join(sorted(unread)))
         if state == CHANGED:
+            todo = (  # a cited file became this directory: nothing left to re-read
+                f"Cite a file inside it, or `{cit.path.rstrip('/')}/`."
+                if kind_change(cit, old.fingerprint, path) is not None
+                else "Re-read it before relying on or updating this memory."
+            )
             outcome.feedback.append(
                 f"{note.name} rests on {cit.raw}, which changed after this memory was written"
-                f"{_named(cit, old.fingerprint, path)}. Re-read it before relying on or updating "
-                "this memory."
+                f"{_named(cit, old.fingerprint, path)}. {todo}"
             )
         return old
     if any(raw_digest(target) != digest for (_, target), digest in zip(files, seen, strict=True)):
@@ -193,9 +197,15 @@ def on_save(
             reason = kind_change(cit, old.fingerprint, path)
             if reason is not None:  # nothing to re-fingerprint: report it as session start does
                 kept[cit.raw] = old
+                folder = cit.path.rstrip("/")
+                todo = (  # nothing left to re-read: say what to cite instead
+                    f"Cite a file inside it, or `{folder}/`."
+                    if path.is_dir()
+                    else "Re-read it before relying on or updating this memory."
+                )
                 outcome.feedback.append(
                     f"{note.name} rests on {cit.raw}, which changed after this memory was "
-                    f"written: {reason}. Re-read it before relying on or updating this memory."
+                    f"written: {reason}. {todo}"
                 )
                 continue
         if _directory_citation(cit, path):
