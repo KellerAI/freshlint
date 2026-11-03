@@ -20,7 +20,8 @@ from team_support import MARKER, build_marker_repo
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "team"
 SCHEMA = json.loads((ROOT / "schemas" / "team-run-v1.schema.json").read_text())
-VALIDATOR = Draft202012Validator(SCHEMA)
+# format_checker: ran_at is format date-time (asserted with the rfc3339-validator dev extra).
+VALIDATOR = Draft202012Validator(SCHEMA, format_checker=Draft202012Validator.FORMAT_CHECKER)
 META = {
     "repository_id": 123456789,
     "repo": "KellerAI/freshlint-sandbox",
@@ -170,6 +171,12 @@ def test_invalid_finding_fields_are_rejected(field, value):
         ("sha", "0123456789ABCDEF0123456789ABCDEF01234567"),
         ("ran_at", "2026-09-30 12:00:00"),
         ("ran_at", "2026-09-30T12:00:00+02:00"),
+        ("ran_at", "2026-02-30T12:00:00Z"),
+        ("ran_at", "2026-02-29T12:00:00Z"),
+        ("ran_at", "2026-09-30T24:00:00Z"),
+        ("ran_at", "2026-09-30T12:60:00Z"),
+        ("ran_at", "2026-12-31T23:59:60Z"),
+        ("repository_id", 9007199254740992),
     ],
 )
 def test_invalid_metadata_is_rejected(key, value):
@@ -201,6 +208,28 @@ def test_not_a_report():
     for raw in ([], "text", None, 3):
         with pytest.raises(PayloadError):
             build_payload(raw, **META)
+
+
+def test_integer_limits():
+    payload = build_payload(
+        report(finding(line=2147483647), errors=2147483647, warnings=2147483647, files=2147483647),
+        **{**META, "repository_id": 9007199254740991, "ran_at": "2028-02-29T23:59:59.5Z"},
+    )
+    VALIDATOR.validate(payload)
+    with pytest.raises(PayloadError):
+        build_payload(report(finding(line=2147483648)), **META)
+    for key in ("errors", "warnings", "files"):
+        with pytest.raises(PayloadError):
+            build_payload(report(**{key: 2147483648}), **META)
+
+
+def test_the_format_checker_really_checks_date_time():
+    """Without rfc3339-validator, jsonschema silently skips format: date-time."""
+    assert "date-time" in Draft202012Validator.FORMAT_CHECKER.checkers
+    good = {**json.loads((FIXTURES / "valid-sample.payload.json").read_text())}
+    bad = {**good, "ran_at": "2026-02-30T12:00:00Z"}
+    assert team_payload.RAN_AT_RE.fullmatch(bad["ran_at"])  # the pattern alone accepts it
+    assert VALIDATOR.is_valid(good) and not VALIDATOR.is_valid(bad)
 
 
 def test_findings_cap():
@@ -438,6 +467,15 @@ def test_golden_payload_is_the_transform_of_the_golden_report():
     assert proc.stdout == (FIXTURES / "valid-sample.payload.json").read_text()
 
 
+def test_schema_integer_limits():
+    props = SCHEMA["properties"]
+    assert props["repository_id"]["maximum"] == team_payload.MAX_REPOSITORY_ID == 2**53 - 1
+    assert SCHEMA["$defs"]["finding"]["properties"]["line"]["maximum"] == team_payload.MAX_INT32
+    for key in ("errors", "warnings", "files"):
+        assert props["summary"]["properties"][key]["maximum"] == team_payload.MAX_INT32 == 2**31 - 1
+    assert props["ran_at"]["format"] == "date-time"
+
+
 @pytest.mark.parametrize(
     "path", sorted(FIXTURES.glob("valid-*.payload.json")), ids=lambda p: p.name
 )
@@ -455,3 +493,11 @@ def test_invalid_fixtures_do_not_validate(path):
 def test_fixture_sets_are_not_empty():
     assert len(list(FIXTURES.glob("valid-*.payload.json"))) >= 2
     assert len(list(FIXTURES.glob("invalid-*.payload.json"))) >= 5
+    for name in (
+        "valid-integer-limits",
+        "invalid-line-over-int32",
+        "invalid-summary-count-over-int32",
+        "invalid-repository-id-over-2-53",
+        "invalid-ran-at-impossible-date",
+    ):
+        assert (FIXTURES / f"{name}.payload.json").is_file(), name

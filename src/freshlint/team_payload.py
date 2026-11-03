@@ -37,6 +37,8 @@ UNKNOWN_RULE_MESSAGE = "Freshlint finding."
 MAX_FINDINGS = 5000
 MAX_PAYLOAD_BYTES = 1_048_576
 MAX_PATH_CHARS = 4096
+MAX_INT32 = 2_147_483_647  # line and summary counts
+MAX_REPOSITORY_ID = 9_007_199_254_740_991  # 2**53 - 1: GitHub ids are bigints
 
 KIND_RE = re.compile(r"[a-z0-9-]{1,64}")
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
@@ -57,8 +59,8 @@ def _is_int(value: Any) -> bool:
 
 def _count(summary: dict, key: str) -> int:
     value = summary.get(key)
-    if not _is_int(value) or value < 0:
-        raise PayloadError(f"summary.{key} must be a non-negative integer")
+    if not _is_int(value) or not 0 <= value <= MAX_INT32:
+        raise PayloadError(f"summary.{key} must be an integer from 0 to {MAX_INT32}")
     return value
 
 
@@ -72,7 +74,7 @@ def _finding(index: int, raw: Any) -> dict:
     if not isinstance(path, str) or not 0 < len(path) <= MAX_PATH_CHARS:
         raise PayloadError(f"finding {index} has no valid path")
     line = raw.get("line")
-    if not _is_int(line) or line < 0:
+    if not _is_int(line) or not 0 <= line <= MAX_INT32:
         raise PayloadError(f"finding {index} has no valid line")
     severity = raw.get("severity")
     if severity not in SEVERITIES:
@@ -87,15 +89,26 @@ def _finding(index: int, raw: Any) -> dict:
     }
 
 
+def _valid_ran_at(value: object) -> bool:
+    """An RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SS[.ffffff]Z) naming a real instant."""
+    if not isinstance(value, str) or not RAN_AT_RE.fullmatch(value):
+        return False
+    try:
+        dt.datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:  # February 30, hour 24, a leap second
+        return False
+    return True
+
+
 def build_payload(report: Any, *, repository_id: int, repo: str, sha: str, ran_at: str) -> dict:
     """Return the payload for one check report. Raises PayloadError on any invalid field."""
-    if not _is_int(repository_id) or repository_id < 1:
-        raise PayloadError("repository id must be a positive integer")
+    if not _is_int(repository_id) or not 1 <= repository_id <= MAX_REPOSITORY_ID:
+        raise PayloadError(f"repository id must be an integer from 1 to {MAX_REPOSITORY_ID}")
     if not isinstance(repo, str) or not REPO_RE.fullmatch(repo):
         raise PayloadError("repository must be owner/name")
     if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
         raise PayloadError("sha must be 40 lowercase hex characters")
-    if not isinstance(ran_at, str) or not RAN_AT_RE.fullmatch(ran_at):
+    if not _valid_ran_at(ran_at):
         raise PayloadError("ran_at must be an RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)")
     if not isinstance(report, dict) or report.get("tool") != "freshlint":
         raise PayloadError("input is not a freshlint check report")
