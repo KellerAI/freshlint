@@ -137,6 +137,20 @@ def test_full_run_headline_has_no_partial_scan_note():
     assert "only findings in files this run reported" not in markdown
 
 
+def test_full_run_limited_to_paths_reads_like_a_partial_run():
+    markdown = render(parse(comparison(mode="full", scope="paths")))
+    assert "**2 new in this run, 1 fixed** vs ` main ` at ` fedcba9 `." in markdown
+    assert "This run (full, limited to paths, 2 files)" in markdown
+    assert "A run limited to some paths checks only some files" in markdown
+    assert "` main ` now: 2 errors, 2 warnings in 3 files." in markdown
+
+
+def test_missing_scope_means_all():
+    data = comparison(mode="full")
+    del data["comparison"]["scope"]
+    assert render(parse(data)) == render(parse(comparison(mode="full", scope="all")))
+
+
 def test_first_run_without_a_baseline_has_no_tables():
     markdown = render(parse(comparison(baseline=None, new=items([]), fixed=items([]), trend=[])))
     assert "**No full run on ` main ` to compare with yet.**" in markdown
@@ -278,6 +292,8 @@ def _drop(key):
         _drop("totals"),
         _drop("trend"),
         lambda c: c.update(mode="partial"),
+        lambda c: c.update(scope="some"),
+        lambda c: c.update(scope=None),
         lambda c: c.update(default_branch=""),
         lambda c: c.update(default_branch="x" * 256),
         lambda c: c["baseline"].update(sha="not-a-sha"),

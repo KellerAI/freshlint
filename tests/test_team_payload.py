@@ -119,11 +119,12 @@ def test_top_level_metadata_and_summary():
     }
 
 
-OPTIONAL_FIELDS = {"ref", "default_branch", "head_sha"}
+OPTIONAL_FIELDS = {"ref", "default_branch", "head_sha", "scope"}
 GIT = {
     "ref": "refs/pull/7/merge",
     "default_branch": "main",
     "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+    "scope": "all",
 }
 
 
@@ -177,6 +178,35 @@ def test_invalid_git_fields_are_rejected_by_transform_and_schema(field, value):
     payload = {**build_payload(report(), **META), field: value}
     if not value.endswith("\n"):  # Python's re `$` also matches before a final newline
         assert not VALIDATOR.is_valid(payload)
+
+
+@pytest.mark.parametrize("scope", ["all", "paths"])
+def test_scope_is_kept_when_given(scope):
+    payload = build_payload(report(), **META, scope=scope)
+    assert payload["scope"] == scope
+    VALIDATOR.validate(payload)
+
+
+@pytest.mark.parametrize("scope", ["some", "ALL", "path", " paths"])
+def test_invalid_scope_is_rejected_by_transform_and_schema(scope):
+    with pytest.raises(PayloadError, match="scope"):
+        build_payload(report(), **META, scope=scope)
+    assert not VALIDATOR.is_valid({**build_payload(report(), **META), "scope": scope})
+
+
+def test_schema_scope_matches_the_transform():
+    assert SCHEMA["properties"]["scope"]["enum"] == list(team_payload.SCOPES)
+
+
+def test_golden_payload_with_scope_paths_is_the_transform_of_the_golden_report():
+    proc = run_module(
+        (FIXTURES / "report-sample.json").read_text(),
+        *("--repository", META["repo"], "--repository-id", str(META["repository_id"])),
+        *("--sha", META["sha"], "--ran-at", META["ran_at"], "--ref", "refs/heads/main"),
+        *("--default-branch", "main", "--scope", "paths"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == (FIXTURES / "valid-with-scope-paths.payload.json").read_text()
 
 
 def test_schema_patterns_match_the_transform():
@@ -512,7 +542,7 @@ def test_every_object_in_the_schema_forbids_additional_properties():
         assert node.get("additionalProperties") is False, where
         optional = set(node["properties"]) - set(node["required"])
         assert set(node["required"]) <= set(node["properties"]), where
-        # team-run/1 grew three optional fields (FT-10); everything else stays required.
+        # team-run/1 grew four optional fields (FT-10); everything else stays required.
         assert optional == (OPTIONAL_FIELDS if where == "$" else set()), where
 
 

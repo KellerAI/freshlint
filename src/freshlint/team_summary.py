@@ -42,6 +42,7 @@ MAX_SHOWN_CHARS = 300
 MAX_TREND = 30
 SPARK = "▁▂▃▄▅▆▇█"
 MODES = ("full", "diff", "staged")
+SCOPES = ("all", "paths")
 SEVERITIES = ("error", "warning")
 MAX_COUNT = 2**53 - 1
 
@@ -87,6 +88,7 @@ class Counts:
 @dataclass(frozen=True)
 class Comparison:
     mode: str
+    scope: str
     default_branch: str | None
     baseline_sha: str | None
     baseline: Counts | None
@@ -160,6 +162,9 @@ def parse(response: Any) -> Comparison:
     mode = comparison.get("mode")
     if mode not in MODES:
         raise SummaryError("comparison.mode is not a run mode")
+    scope = comparison.get("scope", "all")
+    if scope not in SCOPES:
+        raise SummaryError("comparison.scope is not a scope")
     branch = comparison.get("default_branch")
     if branch is not None and (not isinstance(branch, str) or not 0 < len(branch) <= 255):
         raise SummaryError("comparison.default_branch is not a branch name")
@@ -184,6 +189,7 @@ def parse(response: Any) -> Comparison:
         )
     return Comparison(
         mode=mode,
+        scope=scope,
         default_branch=branch,
         baseline_sha=baseline_sha,
         baseline=baseline,
@@ -253,11 +259,16 @@ def _table(title: str, changes: Changes) -> list[str]:
     return lines
 
 
+def _partial(c: Comparison) -> str:
+    return "A run limited to some paths" if c.scope == "paths" else f"A {c.mode} run"
+
+
 def _headline(c: Comparison) -> list[str]:
     branch = _branch(c)
     totals = c.totals
+    kind = f"{c.mode}, limited to paths" if c.scope == "paths" else c.mode
     this_run = (
-        f"This run ({c.mode}, {_plural(totals.files, 'file')}): "
+        f"This run ({kind}, {_plural(totals.files, 'file')}): "
         f"{_plural(totals.errors, 'error')}, {_plural(totals.warnings, 'warning')}."
     )
     if c.baseline is None:
@@ -272,14 +283,14 @@ def _headline(c: Comparison) -> list[str]:
         f"{branch} now: {_plural(base.errors, 'error')}, {_plural(base.warnings, 'warning')} "
         f"in {_plural(base.files, 'file')}."
     )
-    if c.mode == "full":
+    if c.mode == "full" and c.scope == "all":
         return [
             f"**{c.new.count:,} new, {c.fixed.count:,} fixed** vs {against}. {this_run}",
         ]
     return [
         f"**{c.new.count:,} new in this run, {c.fixed.count:,} fixed** vs {against}. {this_run}",
         "",
-        f"A {c.mode} run checks only some files, so fixed counts only findings in files this "
+        f"{_partial(c)} checks only some files, so fixed counts only findings in files this "
         f"run reported. {now}",
     ]
 

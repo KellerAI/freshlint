@@ -68,6 +68,11 @@
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
     },
+    "scope": {
+      "description": "Optional. \"paths\" when the check was limited to the action's paths input, else \"all\". A run limited to some paths is never a baseline and never counts toward the default branch's trend. A payload without scope is treated as \"all\".",
+      "type": "string",
+      "enum": ["all", "paths"]
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

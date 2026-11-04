@@ -2,6 +2,7 @@
   "run_id": "00000000-0000-4000-8000-000000000000",
   "comparison": {
     "mode": "diff",
+    "scope": "all",
     "default_branch": "main",
     "baseline": {
       "sha": "fedcba9876543210fedcba9876543210fedcba98",

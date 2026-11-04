@@ -378,6 +378,7 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
     assert payload["ref"] == "refs/pull/7/merge"
     assert payload["default_branch"] == "main"
     assert payload["head_sha"] == PR_HEAD_SHA
+    assert payload["scope"] == "all"  # no paths input: a whole-repository scan
 
     # The upload scanned exactly what the check scans: the same summary as the check step.
     check = bash(
@@ -419,6 +420,22 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
 
 @needs_bash
 @needs_curl
+@pytest.mark.parametrize(("paths", "scope"), [("state.md notes.md", "paths"), ("   ", "all")])
+def test_upload_sends_scope_paths_when_the_paths_input_is_set(
+    tmp_path, marker_repo, server, paths, scope
+):
+    proc, _, _ = upload(tmp_path, marker_repo, server, FL_PATHS=paths)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    [post] = [r for r in server.requests() if r["method"] == "POST"]
+    payload = json.loads((server.bodies / post["body_file"]).read_text())
+    assert payload["scope"] == scope
+    Draft202012Validator(SCHEMA, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(
+        payload
+    )
+
+
+@needs_bash
+@needs_curl
 def test_upload_leaves_out_git_fields_the_event_does_not_have(tmp_path, marker_repo, server):
     proc, _, _ = upload(
         tmp_path,
@@ -432,6 +449,7 @@ def test_upload_leaves_out_git_fields_the_event_does_not_have(tmp_path, marker_r
     [post] = [r for r in server.requests() if r["method"] == "POST"]
     payload = json.loads((server.bodies / post["body_file"]).read_text())
     assert {"ref", "default_branch", "head_sha"}.isdisjoint(payload)
+    assert payload["scope"] == "all"
 
 
 @needs_bash

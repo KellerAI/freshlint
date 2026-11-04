@@ -15,11 +15,10 @@ What leaves the runner is built field by field, never copied:
 Usage (in the action, the runner metadata comes from the default GitHub environment)::
 
     freshlint check --format json | python -m freshlint.team_payload \
-        [--ref "$GITHUB_REF"] [--default-branch main] [--head-sha SHA]
+        [--ref "$GITHUB_REF"] [--default-branch main] [--head-sha SHA] [--scope all|paths]
 
-``--ref``, ``--default-branch`` and ``--head-sha`` are optional and are only ever taken from
-arguments: they let freshlint Team compare a pull request with the default branch, and post
-its check run on the pull request's head commit.
+``--ref``, ``--default-branch``, ``--head-sha`` and ``--scope`` are optional and are only ever
+taken from arguments: they let freshlint Team compare a run with the default branch.
 
 Exit codes: 0 = payload written, 2 = bad input or metadata (nothing written to stdout).
 Error messages never echo the input.
@@ -57,6 +56,7 @@ MAX_REF_CHARS = 1024
 MAX_BRANCH_CHARS = 255
 VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.+-]{1,32})?")
 MODES = ("full", "diff", "staged")
+SCOPES = ("all", "paths")
 SEVERITIES = ("error", "warning")
 
 
@@ -111,9 +111,15 @@ def _valid_ran_at(value: object) -> bool:
     return True
 
 
-def _optional_git_fields(ref: str | None, default_branch: str | None, head_sha: str | None) -> dict:
-    """The optional ref, default_branch and head_sha fields; an empty value is left out."""
+def _optional_git_fields(
+    ref: str | None, default_branch: str | None, head_sha: str | None, scope: str | None
+) -> dict:
+    """The optional ref, default_branch, head_sha and scope fields; an empty value is left out."""
     fields: dict[str, str] = {}
+    if scope:
+        if scope not in SCOPES:
+            raise PayloadError('scope must be "all" or "paths"')
+        fields["scope"] = scope
     if ref:
         if not isinstance(ref, str) or len(ref) > MAX_REF_CHARS or not REF_RE.fullmatch(ref):
             raise PayloadError("ref must be a full git ref (refs/...)")
@@ -143,10 +149,12 @@ def build_payload(
     ref: str | None = None,
     default_branch: str | None = None,
     head_sha: str | None = None,
+    scope: str | None = None,
 ) -> dict:
     """Return the payload for one check report. Raises PayloadError on any invalid field.
 
-    ``ref``, ``default_branch`` and ``head_sha`` are optional; each is left out when empty.
+    ``ref``, ``default_branch``, ``head_sha`` and ``scope`` are optional; each is left out when
+    empty. ``scope`` is ``"paths"`` when the check was limited to some paths, else ``"all"``.
     """
     if not _is_int(repository_id) or not 1 <= repository_id <= MAX_REPOSITORY_ID:
         raise PayloadError(f"repository id must be an integer from 1 to {MAX_REPOSITORY_ID}")
@@ -174,7 +182,7 @@ def build_payload(
         raise PayloadError("report has no findings list")
     if len(findings) > MAX_FINDINGS:
         raise PayloadError(f"report has more than {MAX_FINDINGS} findings")
-    git_fields = _optional_git_fields(ref, default_branch, head_sha)
+    git_fields = _optional_git_fields(ref, default_branch, head_sha, scope)
     return {
         "schema": SCHEMA,
         "repository_id": repository_id,
@@ -226,6 +234,11 @@ def _parser() -> argparse.ArgumentParser:
         help="the pull request head commit, when sha is a merge (optional)",
         default=None,
     )
+    parser.add_argument(
+        "--scope",
+        help='"paths" when the check was limited to some paths, else "all" (optional)',
+        default=None,
+    )
     return parser
 
 
@@ -251,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             ref=args.ref,
             default_branch=args.default_branch,
             head_sha=args.head_sha,
+            scope=args.scope,
         )
         text = dumps(payload)
     except PayloadError as exc:

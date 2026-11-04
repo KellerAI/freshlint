@@ -93,6 +93,8 @@ meta=()
 if [[ -n "${GITHUB_REF:-}" ]]; then meta+=(--ref "$GITHUB_REF"); fi
 if [[ -n "${FL_TEAM_DEFAULT_BRANCH:-}" ]]; then meta+=(--default-branch "$FL_TEAM_DEFAULT_BRANCH"); fi
 if [[ -n "${FL_TEAM_HEAD_SHA:-}" ]]; then meta+=(--head-sha "$FL_TEAM_HEAD_SHA"); fi
+# A check limited to the paths input is not a whole-repository scan: never a baseline.
+if [[ -n "${FL_PATHS//[[:space:]]/}" ]]; then meta+=(--scope paths); else meta+=(--scope all); fi
 if ! python -I -m freshlint.team_payload ${meta[@]+"${meta[@]}"} <"$tmp/report.json" >"$tmp/payload.json"; then
   warn "upload skipped: could not build the upload payload."
   exit 1

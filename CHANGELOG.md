@@ -24,11 +24,13 @@ renaming or removing one is a breaking change.
   contract, with golden fixtures in `tests/fixtures/team/`.
 - `freshlint.team_payload`, a pure, standard-library transform from `freshlint check --format
   json` output to that payload. It has no network code.
-- The payload's optional `ref`, `default_branch` and `head_sha` fields (still
+- The payload's optional `ref`, `default_branch`, `head_sha` and `scope` fields (still
   `freshlint-team-run/1`; payloads without them stay valid). The action fills them from
   `GITHUB_REF`, `github.event.repository.default_branch` and, on pull requests,
   `github.event.pull_request.head.sha`. They are informational: freshlint Team takes the
-  default branch and the pull request head from GitHub itself.
+  default branch and the pull request head from GitHub itself. `scope` is `"paths"` when the
+  `paths` input limited the check (else `"all"`): such a run is never a baseline and is compared
+  like a diff run.
 - After a successful upload (HTTP 201), the action adds the run's comparison with the default
   branch to the job summary (`$GITHUB_STEP_SUMMARY`): new and fixed findings by file and rule,
   and the error and warning trend. `freshlint.team_summary` renders it as a pure function that
