@@ -236,7 +236,8 @@ jobs:
           test "$(wc -l <"$RUNNER_TEMP/requests.jsonl")" -eq 1
 
   team-on:
-    # team: true against a mock OIDC endpoint and a mock ingest server.
+    # team: true against a mock OIDC endpoint and a mock ingest server that answers 201 with a
+    # comparison whose paths are hostile markdown and HTML.
     runs-on: ubuntu-latest
     env:
       FAKE_OIDC_SEED: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -263,12 +264,26 @@ jobs:
           test -f "$RUNNER_TEMP/canaries/json.py"
           rm "$RUNNER_TEMP/canaries/json.py"
 
+      - name: Write the mocked 201 response, with hostile paths
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          response = json.loads(Path("tests/fixtures/team/response-201-sample.json").read_text())
+          items = response["comparison"]["new"]["items"]
+          items[0]["path"] = "<img src=x onerror=alert(1)>|`x`\n# owned [a](javascript:alert(1))"
+          items[1]["path"] = "<script>alert(1)</script>.md"
+          Path(os.environ["RUNNER_TEMP"], "response.json").write_text(json.dumps(response))
+          PY
+
       - name: Start the mock OIDC and ingest server
         id: recorder
         run: |
           set -euo pipefail
           nohup python tests/team_support.py serve --port-file "$RUNNER_TEMP/port" \
             --log "$RUNNER_TEMP/requests.jsonl" --bodies "$RUNNER_TEMP/bodies" \
+            --status 201 --response "$RUNNER_TEMP/response.json" \
             >"$RUNNER_TEMP/server.log" 2>&1 &
           for _ in $(seq 100); do [[ -s "$RUNNER_TEMP/port" ]] && break; sleep 0.1; done
           port="$(cat "$RUNNER_TEMP/port")"
@@ -303,6 +318,9 @@ jobs:
       - name: One token request, exactly one POST, no marker, no token on any command line
         env:
           OUTCOME: ${{ steps.action.outcome }}
+          EXPECTED_REF: ${{ github.ref }}
+          EXPECTED_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -338,6 +356,10 @@ jobs:
           assert MARKER in check.stdout  # positive control: the CLI messages echo it
           assert payload["summary"] == report["summary"], (payload["summary"], report["summary"])
           print(f"ok: body valid, marker absent, {len(payload['findings'])} findings")
+          assert payload["ref"] == os.environ["EXPECTED_REF"], payload.get("ref")
+          assert payload["default_branch"] == os.environ["EXPECTED_DEFAULT_BRANCH"]
+          assert payload.get("head_sha") == (os.environ["EXPECTED_HEAD_SHA"] or None)
+          print(f"ok: ref {payload['ref']}, default branch {payload['default_branch']}")
 
           argv = (temp / "argv.log").read_text()
           assert "team_upload.sh" in argv or "curl" in argv, "the sampler saw nothing"
@@ -356,6 +378,51 @@ jobs:
             echo "::error::the upload left files in RUNNER_TEMP"
             exit 1
           fi
+
+      # The composite step's own summary file is gone once the step ends (team-logs checks its
+      # log line), so this step runs the same upload script and reads its own summary file.
+      - name: The mocked 201's comparison reaches the job summary, escaped
+        working-directory: ${{ runner.temp }}/marker-repo
+        env:
+          FL_MODE: diff
+          FL_BASE: HEAD~1
+          FL_HEAD: HEAD
+          FL_EVENT: ${{ github.event_name }}
+          FL_STRICT: "false"
+          FL_TODAY: "2026-09-30"
+          FL_PATHS: ""
+          FL_TEAM_URL: ${{ steps.recorder.outputs.url }}/ingest
+          FL_TEAM_AUDIENCE: freshlint-team
+          FL_TEAM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_ACTION_PATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          before="$(wc -c <"$GITHUB_STEP_SUMMARY")"
+          bash "$GITHUB_ACTION_PATH/scripts/team_upload.sh" | tee "$RUNNER_TEMP/upload.out"
+          grep -qxF "freshlint team: wrote the comparison to the job summary" "$RUNNER_TEMP/upload.out"
+          tail -c "+$((before + 1))" "$GITHUB_STEP_SUMMARY" >"$RUNNER_TEMP/summary.md"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from markdown_it import MarkdownIt
+          from freshlint.team_summary import parse, render
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          written = (temp / "summary.md").read_text()
+          expected = render(parse(json.loads((temp / "response.json").read_text())))
+          assert written == expected, (written, expected)
+          assert written.startswith("### Freshlint Team\n")
+          tokens = []
+          for token in MarkdownIt("commonmark", {"html": True}).enable("table").parse(written):
+              tokens += [token, *(token.children or [])]
+          kinds = {token.type for token in tokens}
+          assert not kinds & {"html_inline", "html_block", "image"}, kinds
+          links = [t.attrs["href"] for t in tokens if t.type == "link_open"]
+          assert links == ["https://freshlint-team.test/o/KellerAI/repo/123456789"], links
+          codes = [t.content for t in tokens if t.type == "code_inline"]
+          assert "<script>alert(1)</script>.md" in codes, codes
+          print(f"ok: {len(written)} characters of job summary, every hostile path a code span")
+          PY
 
   team-fork:
     # team: true with no OIDC token, as on a fork pull request or a Dependabot run.
@@ -460,7 +527,12 @@ jobs:
           temp = Path(os.environ["RUNNER_TEMP"])
           token = fake_oidc_token(os.environ["FAKE_OIDC_SEED"])
           on = (temp / "team-on.log").read_text(errors="replace")
-          assert "freshlint team: uploaded the run summary (HTTP 202)" in on, "upload not in log"
+          assert "freshlint team: uploaded the run summary (HTTP 201)" in on, "upload not in log"
+          wrote = "freshlint team: wrote the comparison to the job summary"
+          # Output lines only (a timestamp, then the text): the step scripts also quote it.
+          printed = [line for line in on.splitlines() if line.split(" ", 1)[-1] == wrote]
+          assert len(printed) == 2, printed  # the composite step and the direct run
+          print("ok: the composite action wrote the mocked comparison to the job summary")
           for part in [token, *token.split(".")]:
               assert part not in on, "the OIDC token (or part of it) is in the team-on log"
           print("ok: the OIDC token is not in the full team-on log")

@@ -14,7 +14,12 @@ What leaves the runner is built field by field, never copied:
 
 Usage (in the action, the runner metadata comes from the default GitHub environment)::
 
-    freshlint check --format json | python -m freshlint.team_payload
+    freshlint check --format json | python -m freshlint.team_payload \
+        [--ref "$GITHUB_REF"] [--default-branch main] [--head-sha SHA]
+
+``--ref``, ``--default-branch`` and ``--head-sha`` are optional and are only ever taken from
+arguments: they let freshlint Team compare a pull request with the default branch, and post
+its check run on the pull request's head commit.
 
 Exit codes: 0 = payload written, 2 = bad input or metadata (nothing written to stdout).
 Error messages never echo the input.
@@ -44,6 +49,12 @@ KIND_RE = re.compile(r"[a-z0-9-]{1,64}")
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 RAN_AT_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z")
+# A git ref or branch name: no control characters, spaces or ~^:?*[\ (git check-ref-format).
+_REF_CHARS = r"[^\u0000-\u0020\u007f~^:?*\[\\]+"
+REF_RE = re.compile("refs/" + _REF_CHARS)
+BRANCH_RE = re.compile(_REF_CHARS)
+MAX_REF_CHARS = 1024
+MAX_BRANCH_CHARS = 255
 VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.+-]{1,32})?")
 MODES = ("full", "diff", "staged")
 SEVERITIES = ("error", "warning")
@@ -100,8 +111,43 @@ def _valid_ran_at(value: object) -> bool:
     return True
 
 
-def build_payload(report: Any, *, repository_id: int, repo: str, sha: str, ran_at: str) -> dict:
-    """Return the payload for one check report. Raises PayloadError on any invalid field."""
+def _optional_git_fields(ref: str | None, default_branch: str | None, head_sha: str | None) -> dict:
+    """The optional ref, default_branch and head_sha fields; an empty value is left out."""
+    fields: dict[str, str] = {}
+    if ref:
+        if not isinstance(ref, str) or len(ref) > MAX_REF_CHARS or not REF_RE.fullmatch(ref):
+            raise PayloadError("ref must be a full git ref (refs/...)")
+        fields["ref"] = ref
+    if default_branch:
+        if (
+            not isinstance(default_branch, str)
+            or len(default_branch) > MAX_BRANCH_CHARS
+            or not BRANCH_RE.fullmatch(default_branch)
+        ):
+            raise PayloadError("default branch must be a branch name")
+        fields["default_branch"] = default_branch
+    if head_sha:
+        if not isinstance(head_sha, str) or not SHA_RE.fullmatch(head_sha):
+            raise PayloadError("head sha must be 40 lowercase hex characters")
+        fields["head_sha"] = head_sha
+    return fields
+
+
+def build_payload(
+    report: Any,
+    *,
+    repository_id: int,
+    repo: str,
+    sha: str,
+    ran_at: str,
+    ref: str | None = None,
+    default_branch: str | None = None,
+    head_sha: str | None = None,
+) -> dict:
+    """Return the payload for one check report. Raises PayloadError on any invalid field.
+
+    ``ref``, ``default_branch`` and ``head_sha`` are optional; each is left out when empty.
+    """
     if not _is_int(repository_id) or not 1 <= repository_id <= MAX_REPOSITORY_ID:
         raise PayloadError(f"repository id must be an integer from 1 to {MAX_REPOSITORY_ID}")
     if not isinstance(repo, str) or not REPO_RE.fullmatch(repo):
@@ -128,11 +174,13 @@ def build_payload(report: Any, *, repository_id: int, repo: str, sha: str, ran_a
         raise PayloadError("report has no findings list")
     if len(findings) > MAX_FINDINGS:
         raise PayloadError(f"report has more than {MAX_FINDINGS} findings")
+    git_fields = _optional_git_fields(ref, default_branch, head_sha)
     return {
         "schema": SCHEMA,
         "repository_id": repository_id,
         "repo": repo,
         "sha": sha,
+        **git_fields,
         "ran_at": ran_at,
         "freshlint_version": version,
         "mode": mode,
@@ -167,6 +215,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sha", help="commit SHA (default: $GITHUB_SHA)", default=None)
     parser.add_argument("--ran-at", help="RFC 3339 UTC time (default: now)", default=None)
+    parser.add_argument("--ref", help="full git ref, e.g. refs/heads/main (optional)", default=None)
+    parser.add_argument(
+        "--default-branch",
+        help="the repository's default branch, e.g. main (optional)",
+        default=None,
+    )
+    parser.add_argument(
+        "--head-sha",
+        help="the pull request head commit, when sha is a merge (optional)",
+        default=None,
+    )
     return parser
 
 
@@ -189,6 +248,9 @@ def main(argv: list[str] | None = None) -> int:
             repo=args.repository or os.environ.get("GITHUB_REPOSITORY", ""),
             sha=args.sha or os.environ.get("GITHUB_SHA", ""),
             ran_at=args.ran_at or _now(),
+            ref=args.ref,
+            default_branch=args.default_branch,
+            head_sha=args.head_sha,
         )
         text = dumps(payload)
     except PayloadError as exc:

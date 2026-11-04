@@ -13,7 +13,8 @@ rules. The positive control (the marker IS in the raw check output) is part of e
 
 The mock server plays both the GitHub OIDC token endpoint (GET /token) and the freshlint Team
 ingest endpoint (POST /ingest). It records each request as one JSON line, with booleans for
-the Authorization checks instead of the header values, and saves POST bodies to files.
+the Authorization checks instead of the header values, and saves POST bodies to files. A POST
+gets `status` and, when `response` is set, that body as JSON (a 201 with a comparison).
 """
 
 from __future__ import annotations
@@ -192,11 +193,14 @@ def build_marker_repo(dest: Path) -> Path:
 class MockServer:
     """Mock GitHub OIDC token endpoint and freshlint Team ingest endpoint on 127.0.0.1."""
 
-    def __init__(self, log: Path, bodies: Path, token: str, status: int = 202):
+    def __init__(
+        self, log: Path, bodies: Path, token: str, status: int = 202, response: bytes = b""
+    ):
         self.log = log
         self.bodies = bodies
         self.token = token
         self.status = status
+        self.response = response
         self.lock = threading.Lock()
         bodies.mkdir(parents=True, exist_ok=True)
         log.touch()
@@ -249,8 +253,11 @@ class MockServer:
                     }
                 )
                 self.send_response(server.status)
-                self.send_header("Content-Length", "0")
+                if server.response:
+                    self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(server.response)))
                 self.end_headers()
+                self.wfile.write(server.response)
 
             def do_PUT(self):  # noqa: N802
                 self._record({"method": "PUT", "path": urlsplit(self.path).path})
@@ -287,12 +294,14 @@ def _main(argv: list[str]) -> int:
     serve.add_argument("--log", type=Path, required=True)
     serve.add_argument("--bodies", type=Path, required=True)
     serve.add_argument("--status", type=int, default=202)
+    serve.add_argument("--response", type=Path, help="JSON body for every POST")
     args = parser.parse_args(argv)
     if args.command == "marker-repo":
         build_marker_repo(args.dest)
         return 0
     seed = os.environ.get("FAKE_OIDC_SEED", "local")
-    server = MockServer(args.log, args.bodies, fake_oidc_token(seed), args.status)
+    response = args.response.read_bytes() if args.response else b""
+    server = MockServer(args.log, args.bodies, fake_oidc_token(seed), args.status, response)
     args.port_file.write_text(str(server.port))
     try:
         server.httpd.serve_forever()

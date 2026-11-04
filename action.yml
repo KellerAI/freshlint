@@ -49,8 +49,10 @@ inputs:
       Opt in to freshlint Team ("true" or "false"). When "true", after the check the action
       uploads a run summary (file paths, line numbers, rule ids, counts and static rule
       summaries; never file contents or finding messages) to team-url, authenticated with a
-      GitHub Actions OIDC token. Needs "permissions: id-token: write". When "false" (the
-      default) the upload step does not run: nothing is uploaded and no request is made.
+      GitHub Actions OIDC token. Needs "permissions: id-token: write". After a successful
+      upload, the run's comparison with the default branch (new and fixed findings, and the
+      trend) is added to the job summary. When "false" (the default) the upload step does not
+      run: nothing is uploaded and no request is made.
     required: false
     default: "false"
   team-url:
@@ -111,4 +113,7 @@ runs:
         FL_PATHS: ${{ inputs.paths }}
         FL_TEAM_URL: ${{ inputs.team-url }}
         FL_TEAM_AUDIENCE: ${{ inputs.team-audience }}
+        # Event metadata for the comparison with the default branch (empty when absent).
+        FL_TEAM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        FL_TEAM_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: bash "$GITHUB_ACTION_PATH/scripts/team_upload.sh"

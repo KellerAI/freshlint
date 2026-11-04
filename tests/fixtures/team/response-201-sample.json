@@ -1,0 +1,33 @@
+{
+  "run_id": "00000000-0000-4000-8000-000000000000",
+  "comparison": {
+    "mode": "diff",
+    "default_branch": "main",
+    "baseline": {
+      "sha": "fedcba9876543210fedcba9876543210fedcba98",
+      "ran_at": "2026-09-29T12:00:00.000Z",
+      "errors": 2,
+      "warnings": 2,
+      "files": 3
+    },
+    "new": {
+      "count": 2,
+      "items": [
+        { "path": "context/company.md", "rule": "freshness-laundering", "severity": "error", "count": 1 },
+        { "path": "context/shipping.md", "rule": "some-future-rule", "severity": "error", "count": 1 }
+      ]
+    },
+    "fixed": {
+      "count": 1,
+      "items": [
+        { "path": "context/shipping.md", "rule": "temporal-language", "severity": "warning", "count": 1 }
+      ]
+    },
+    "totals": { "errors": 3, "warnings": 1, "files": 2 },
+    "trend": [
+      { "errors": 4, "warnings": 2 },
+      { "errors": 2, "warnings": 2 }
+    ],
+    "url": "https://freshlint-team.test/o/KellerAI/repo/123456789"
+  }
+}

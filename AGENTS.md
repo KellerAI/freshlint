@@ -39,7 +39,8 @@ FRESHLINT_CMD="python -m freshlint" PYTHONPATH=src examples/demo.sh > examples/d
 - **Deterministic and offline.** The CLI and the plugin never access the network; no clock
   reads except the default for `--today`, sorted output. The only network code is the
   composite action's opt-in upload (`team: true`, `scripts/team_upload.sh`); the payload
-  transform it uses (`freshlint.team_payload`) is pure and sends nothing.
+  transform (`freshlint.team_payload`) and the job-summary renderer (`freshlint.team_summary`)
+  it uses are pure and send nothing.
 - **Read-only.** freshlint never writes to the files or repositories it checks.
 - **Stable rule IDs.** Renaming or removing a rule is a breaking change. A new rule needs an
   entry in `src/freshlint/catalog.py`, tests, `docs/rules/<rule-id>.md`, a README rule-table

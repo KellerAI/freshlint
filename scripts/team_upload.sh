@@ -11,6 +11,10 @@
 # RUNNER_TEMP that curl reads with -H @file, and never appears on a command line. The
 # temporary directory is removed on exit.
 #
+# After a 201, the response's comparison with the default branch is rendered by the pure
+# `python -I -m freshlint.team_summary` and appended to $GITHUB_STEP_SUMMARY. Nothing else is
+# done with the response, and no further request is made.
+#
 # This runs in the customer's checkout, so nothing here may execute code from it: every
 # Python call uses isolated mode (-I: the working directory is not on sys.path, PYTHON*
 # variables and the user site are ignored), and the runner's OIDC request variables are
@@ -19,8 +23,9 @@
 #
 # Inputs (environment): the FL_* variables build_args.sh reads, FL_TEAM_URL, FL_TEAM_AUDIENCE,
 # ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN (set by the runner when the
-# job has `permissions: id-token: write`), GITHUB_REPOSITORY, GITHUB_REPOSITORY_ID, GITHUB_SHA
-# and GITHUB_ACTION_PATH.
+# job has `permissions: id-token: write`), GITHUB_REPOSITORY, GITHUB_REPOSITORY_ID, GITHUB_SHA,
+# GITHUB_REF, GITHUB_STEP_SUMMARY and GITHUB_ACTION_PATH, and the optional
+# FL_TEAM_DEFAULT_BRANCH and FL_TEAM_HEAD_SHA (from the workflow's event).
 set -euo pipefail
 
 notice() { echo "::notice title=freshlint team::$1"; }
@@ -82,8 +87,13 @@ if [[ "$status" -gt 1 ]]; then
   exit 1
 fi
 
-# 2. The payload: a pure transform with no network code.
-if ! python -I -m freshlint.team_payload <"$tmp/report.json" >"$tmp/payload.json"; then
+# 2. The payload: a pure transform with no network code. The ref and default branch let the
+#    service compare this run with the default branch; head_sha is the pull request's head.
+meta=()
+if [[ -n "${GITHUB_REF:-}" ]]; then meta+=(--ref "$GITHUB_REF"); fi
+if [[ -n "${FL_TEAM_DEFAULT_BRANCH:-}" ]]; then meta+=(--default-branch "$FL_TEAM_DEFAULT_BRANCH"); fi
+if [[ -n "${FL_TEAM_HEAD_SHA:-}" ]]; then meta+=(--head-sha "$FL_TEAM_HEAD_SHA"); fi
+if ! python -I -m freshlint.team_payload ${meta[@]+"${meta[@]}"} <"$tmp/report.json" >"$tmp/payload.json"; then
   warn "upload skipped: could not build the upload payload."
   exit 1
 fi
@@ -141,4 +151,15 @@ if [[ "$code" == 2?? ]]; then
 else
   warn "upload failed (HTTP $code). The check result is unchanged."
   exit 1
+fi
+
+# 5. The comparison, into the job summary. The response is rendered by a pure function that
+#    escapes every value in it; a response it cannot render leaves the summary untouched.
+if [[ "$code" == 201 && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+  if python -I -m freshlint.team_summary <"$tmp/response" >"$tmp/summary.md" 2>/dev/null; then
+    cat "$tmp/summary.md" >>"$GITHUB_STEP_SUMMARY"
+    echo "freshlint team: wrote the comparison to the job summary"
+  else
+    warn "the upload succeeded, but its comparison could not be shown in the job summary."
+  fi
 fi
