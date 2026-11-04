@@ -36,6 +36,13 @@ renaming or removing one is a breaking change.
   and the error and warning trend. `freshlint.team_summary` renders it as a pure function that
   shows every path and rule id inside a code span, so markdown and HTML in them stay text. No
   new workflow permission is needed, and the check result is unchanged.
+- Directory citations: `src/auth/` fingerprints a manifest of the files git would track under
+  the directory and reads changed when one is edited, added, removed or renamed, naming the
+  files. Every file must have been read in the session; otherwise the save and session start
+  give the number of unread files and name the first five. More than 50 files or 2 MB is
+  refused ("too large; cite a narrower directory or files"), as is a directory outside a git
+  repo or with no tracked files. A bare `src/auth` is taken as `src/auth/` at the next save;
+  the note is not rewritten.
 
 ### Changed
 
@@ -44,13 +51,19 @@ renaming or removing one is a breaking change.
   compares them byte for byte with the v0.2.0 script).
 - The "no network" statements now say what holds: the CLI and the plugin never make network
   requests; the action uploads a run summary only when you set `team: true`.
+- The evidence store is now version 2. Version 1 stores are read unchanged. A store written by
+  a newer freshlint is reported and left untouched. **Downgrading freshlint after this release
+  resets the evidence store**: an older version treats a version 2 store as corrupt and
+  rebuilds it, so saved fingerprints are lost.
+- A directory citation with a symbol, key or line range is still reported as "`dir` is a
+  directory; cite a file inside it"; a bare directory is now cited as a directory.
 
 ### Fixed
 
-- A citation of a directory is reported as a directory when the note is saved
-  ("`dir` is a directory; cite a file inside it") instead of as unread code, and session start
-  repeats that reason instead of "it was not read when the memory was saved". The finding kind
-  is still `unread`. The README no longer says directories get "is not defined in ...".
+- A citation of a directory with a symbol, key or line range is reported as a directory when
+  the note is saved ("`dir` is a directory; cite a file inside it") instead of as unread code,
+  and session start repeats that reason instead of "it was not read when the memory was saved".
+  The finding kind is still `unread`. The README no longer says directories get "is not defined in ...".
 
 ## [0.2.0] - 2026-10-30
 

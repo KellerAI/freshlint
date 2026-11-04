@@ -915,8 +915,7 @@ def test_a_directory_cited_at_save_is_reported_as_a_directory_at_session_start(c
     assert [(f.state, f.message) for f in result.findings] == [
         (
             "unread",
-            "cites src, but when the memory was saved src is a directory; cite a file inside "
-            "it, so it was never fingerprinted.",
+            "cites src, a directory, but not every file in it was read when the memory was "
+            "saved (1 file unread: a.py), so it was never fingerprinted. Write it as `src/`.",
         )
     ]
-    assert "not read" not in result.findings[0].message

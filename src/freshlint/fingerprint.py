@@ -18,10 +18,12 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from freshlint import symbols
+from freshlint import gitio, symbols
 from freshlint.evidence import Citation
 
 MAX_BYTES = 2_000_000
+DIR_MAX_FILES = 50  # a directory citation covers at most this many files
+DIR_MAX_BYTES = 2_000_000  # and at most this many bytes in total
 MIN_RELOCATE_LINES = 3  # a moved line range is trusted only with this many non-blank lines
 FRESH, CHANGED, GONE = "fresh", "changed", "gone"
 
@@ -45,9 +47,11 @@ class Fingerprint:
     fallback: bool = False  # True when a narrower citation is tracked at file level
     start: int | None = None  # a line range's first line when it was taken
     unique: bool = False  # the line range occurred exactly once in the file when it was taken
+    # A directory's manifest: (path relative to the directory, file digest) per file, sorted.
+    entries: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "kind": self.kind,
             "digest": self.digest,
             "line_digests": list(self.line_digests),
@@ -55,6 +59,9 @@ class Fingerprint:
             "start": self.start,
             "unique": self.unique,
         }
+        if self.entries:
+            data["entries"] = [list(entry) for entry in self.entries]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> Fingerprint:
@@ -65,6 +72,7 @@ class Fingerprint:
             bool(data.get("fallback", False)),
             None if data.get("start") is None else int(data["start"]),
             bool(data.get("unique", False)),
+            tuple((str(rel), str(digest)) for rel, digest in data.get("entries", ())),
         )
 
 
@@ -118,9 +126,116 @@ def file_digest(text: str) -> str:
     return _sha("\n".join(normalize(text)))
 
 
-def directory_problem(cited: str) -> str:
-    """What is wrong with citing a directory, in the words every report uses."""
-    return f"{cited} is a directory; cite a file inside it"
+UNREAD = "unread:"  # a record problem: the files of a directory left unread, one per line
+UNREAD_NAMES_SHOWN = 5  # unread files a message names before "…and N more"
+
+
+def unread_summary(names: list[str]) -> str:
+    """``3 files unread: a.py, b.py, c.py``, naming the first few in sorted order."""
+    names = sorted(names)
+    shown = ", ".join(names[:UNREAD_NAMES_SHOWN])
+    more = len(names) - UNREAD_NAMES_SHOWN
+    count = f"{len(names)} file{'' if len(names) == 1 else 's'} unread"
+    return f"{count}: {shown}" + (f" …and {more} more" if more > 0 else "")
+
+
+def cites_directory(cit: Citation) -> bool:
+    """Whether a citation of a directory is fingerprinted as one (a manifest of its files).
+
+    ``dir/`` always is. A bare ``dir`` is too: it is taken as ``dir/`` at the next save, with
+    the note left as written. Any ``#`` part (symbol, key, line range) never is.
+    """
+    return cit.kind == "file"
+
+
+def directory_problem(cit: Citation) -> str:
+    """What is wrong with citing a directory without the trailing ``/`` of a directory citation."""
+    if cit.kind == "file":
+        return f"{cit.path} is a directory; write it as `{cit.path}/` or cite a file inside it"
+    return f"{cit.path} is a directory; cite a file inside it"
+
+
+def kind_change(cit: Citation, stored: Fingerprint, path: Path) -> str | None:
+    """Why ``path`` can no longer match ``stored``: a file became a directory, or the reverse.
+
+    Save and session start both report this text, so the two never give different reasons.
+    """
+    try:
+        is_dir = path.is_dir()
+    except OSError:  # cannot even be looked at: unreadable, not a change of kind
+        return None
+    if stored.kind != "dir" and is_dir:
+        return f"{cit.path.rstrip('/')} is now a directory"
+    if stored.kind == "dir" and not is_dir and not is_missing(path):
+        return f"{cit.path.rstrip('/')} is now a file"
+    return None
+
+
+def directory_files(path: Path, cited: str) -> list[tuple[str, Path]]:
+    """The files a directory citation covers: ``(path relative to it, path)``, sorted.
+
+    Only files git would track count (committed, staged or untracked but not ignored), so
+    build output and other ignored files never enter a manifest. A directory outside a git
+    repository, one with no such files, and one over ``DIR_MAX_FILES`` files or
+    ``DIR_MAX_BYTES`` bytes are refused with ``TargetMissing``: never a weaker check.
+    """
+    shown = cited if cited.endswith("/") else cited + "/"
+    if not path.is_dir():  # git cannot run in a file: say so instead of failing
+        raise TargetMissing(f"{shown} is not a directory")
+    try:
+        if gitio.toplevel(path) is None:
+            raise TargetMissing(
+                f"{shown} is not in a git repo: directory citations need a git repo"
+            )
+        names = gitio.ls_files(path)
+    except gitio.GitError:
+        raise TargetMissing(
+            f"{shown} could not be listed: directory citations need a git repo"
+        ) from None
+    files: list[tuple[str, Path]] = []
+    total = 0
+    for rel in names:
+        target = path / rel
+        try:
+            info = target.stat()
+        except OSError:
+            continue  # deleted from the work tree but still in the index: not there to cite
+        if not stat.S_ISREG(info.st_mode):
+            continue
+        files.append((rel, target))
+        total += info.st_size
+        if len(files) > DIR_MAX_FILES or total > DIR_MAX_BYTES:
+            raise TargetMissing(
+                f"{shown} has more than {DIR_MAX_FILES} files or "
+                f"{DIR_MAX_BYTES // 1_000_000} MB: too large; cite a narrower directory or files"
+            )
+    if not files:
+        raise TargetMissing(f"{shown} has no tracked files")
+    return files
+
+
+def _manifest(path: Path, cited: str) -> Fingerprint:
+    entries = []
+    for rel, target in directory_files(path, cited):
+        digest = current_digest(target)
+        if digest is None:
+            raise _Unreadable(f"{cited}{'' if cited.endswith('/') else '/'}{rel} cannot be read")
+        entries.append((rel, digest))
+    digest = _sha("\n".join(f"{rel}\t{d}" for rel, d in sorted(entries)))
+    return Fingerprint("dir", digest, entries=tuple(sorted(entries)))
+
+
+def directory_changes(stored: Fingerprint, path: Path) -> list[str]:
+    """What differs between a stored directory manifest and the directory now, file by file."""
+    try:
+        now = dict(_manifest(path, str(path)).entries)
+    except TargetMissing:
+        return []
+    then = dict(stored.entries)
+    changes = [f"{rel} edited" for rel in sorted(then) if rel in now and now[rel] != then[rel]]
+    changes += [f"{rel} added" for rel in sorted(now) if rel not in then]
+    changes += [f"{rel} removed" for rel in sorted(then) if rel not in now]
+    return changes
 
 
 def is_missing(path: Path) -> bool:
@@ -236,7 +351,9 @@ def take(cit: Citation, path: Path) -> Fingerprint:
         raise _Unreadable(f"{cit.path} cannot be read")
     if text is None and large is None:
         if path.is_dir():
-            raise TargetMissing(directory_problem(cit.path))
+            if cites_directory(cit):
+                return _manifest(path, cit.path)
+            raise TargetMissing(directory_problem(cit))
         raise TargetMissing(f"{cit.path} does not exist")
     if large is not None:
         return Fingerprint(cit.kind, large, fallback=cit.kind != "file")
@@ -289,7 +406,21 @@ def _lines_unchanged(cit: Citation, stored: Fingerprint, text: str) -> bool:
     return solid and stored.unique and _count(_hashes(lines), needle) == 1
 
 
+def _compare_directory(stored: Fingerprint, path: Path) -> str:
+    if is_missing(path):
+        return GONE
+    try:
+        current = _manifest(path, str(path))
+    except TargetMissing:  # unreadable, emptied, over the cap or out of git: not shown unchanged
+        return CHANGED
+    return FRESH if current.digest == stored.digest else CHANGED
+
+
 def compare(cit: Citation, stored: Fingerprint, path: Path) -> str:
+    if kind_change(cit, stored, path) is not None:  # it exists, so it is not GONE
+        return CHANGED
+    if stored.kind == "dir":  # before the load below, which answers GONE for any directory
+        return _compare_directory(stored, path)
     text, large = _load(path)
     if large == _UNREADABLE:
         return CHANGED  # present but unreadable: it cannot be shown unchanged, nor gone

@@ -26,6 +26,10 @@ SESSION_DEADLINE_S = 3.0
 FILE_TOOLS = frozenset({"Read", "Edit", "MultiEdit", "Write", "NotebookEdit"})
 EVENTS_ENV = "FRESHLINT_EVENTS"
 PROJECT_DIR_ENV = "CLAUDE_PROJECT_DIR"
+NEWER_STORE = (
+    "freshlint: the memory evidence store was written by a newer version of freshlint, so this "
+    "version left it unchanged and checked nothing. Upgrade freshlint."
+)
 
 
 def _text(value: object) -> str | None:
@@ -77,6 +81,9 @@ def _session_start(payload: dict) -> str:
         return ""
     with store.locked(memory_dir):
         evidence = store.load_store(memory_dir)
+        if evidence.newer:  # leave the store alone, and check nothing against an empty one
+            _event("session_report", session=_text(payload.get("session_id")), newer=True)
+            return _context_output("SessionStart", NEWER_STORE)
         first_run = evidence.last_scan is None and not evidence.corrupt
         result = scan(memory_dir, ctx, evidence, deadline=time.monotonic() + SESSION_DEADLINE_S)
         evidence.last_scan = time.time()
@@ -141,6 +148,8 @@ def _post_tool_use(payload: dict, today: dt.date) -> str:
         reads = ledger.reads(session, agent) if session is not None else {}
         with store.locked(memory_dir):  # load, change and save without losing a parallel save
             evidence = store.load_store(memory_dir)
+            if evidence.newer:
+                return _feedback(NEWER_STORE)
             outcome = save.on_save(note, evidence, reads, ctx, today)
             store.save_store(memory_dir, evidence)
             with contextlib.suppress(OSError):  # bookkeeping must not drop the feedback
