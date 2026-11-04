@@ -240,6 +240,7 @@ def test_code_span_fence_is_longer_than_any_backtick_run():
         "//evil.example/x",
         "https://" + "a" * 2100,
         42,
+        None,
     ],
 )
 def test_unsafe_links_are_left_out(url):

@@ -58,13 +58,13 @@
       "pattern": "^refs/[^\\u0000-\\u0020\\u007f~^:?*\\[\\\\]+$"
     },
     "default_branch": {
-      "description": "Optional. The repository's default branch name (github.event.repository.default_branch), such as main. A run whose ref is refs/heads/<default_branch> is a run on the default branch, which later runs are compared with.",
+      "description": "Optional. The repository's default branch name (github.event.repository.default_branch), such as main. Informational: the server decides which runs are on the default branch from the OIDC token's ref and the default branch GitHub reports to its App, never from this field.",
       "type": "string",
       "maxLength": 255,
       "pattern": "^[^\\u0000-\\u0020\\u007f~^:?*\\[\\\\]+$"
     },
     "head_sha": {
-      "description": "Optional. On pull_request events, the pull request's head commit (github.event.pull_request.head.sha); sha is then GitHub's test merge commit. The freshlint Team check run is posted on this commit, so it shows on the pull request.",
+      "description": "Optional. On pull_request events, the pull request's head commit (github.event.pull_request.head.sha); sha is then GitHub's test merge commit. Informational: the server reads the pull request's head from GitHub for its check run, and never counts a run whose head_sha differs from sha as a default-branch run.",
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
     },

@@ -168,7 +168,8 @@ jobs:
           diff -u examples/demo-output.txt "$RUNNER_TEMP/demo.txt"
           echo "ok: demo output byte-identical to its golden"
           "$deny" "$RUNNER_TEMP/pytest.trace" python -m pytest -q -p no:cacheprovider \
-            tests/test_team_payload.py tests/test_action_scripts.py -k "not upload"
+            tests/test_team_payload.py tests/test_team_summary.py tests/test_action_scripts.py \
+            -k "not upload"
 
       - name: No traced process opened an internet socket
         run: |
@@ -401,7 +402,8 @@ jobs:
           bash "$GITHUB_ACTION_PATH/scripts/team_upload.sh" | tee "$RUNNER_TEMP/upload.out"
           grep -qxF "freshlint team: wrote the comparison to the job summary" "$RUNNER_TEMP/upload.out"
           tail -c "+$((before + 1))" "$GITHUB_STEP_SUMMARY" >"$RUNNER_TEMP/summary.md"
-          python - <<'PY'
+          # Isolated mode: this directory holds the planted hostile modules.
+          python -I - <<'PY'
           import json, os
           from pathlib import Path
           from markdown_it import MarkdownIt

@@ -436,7 +436,7 @@ def test_upload_leaves_out_git_fields_the_event_does_not_have(tmp_path, marker_r
 
 @needs_bash
 @needs_curl
-def test_created_upload_writes_the_comparison_to_the_job_summary(tmp_path, marker_repo, server):
+def test_upload_created_writes_the_comparison_to_the_job_summary(tmp_path, marker_repo, server):
     server.status, server.response = 201, RESPONSE
     proc, calls, runner_temp = upload(tmp_path, marker_repo, server)
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -459,7 +459,7 @@ def test_created_upload_writes_the_comparison_to_the_job_summary(tmp_path, marke
     [b"", b"not json", json.dumps({"run_id": "x"}).encode(), b"{" * 200_000],
     ids=["empty", "text", "no-comparison", "deep"],
 )
-def test_unusable_comparison_warns_and_leaves_the_summary_alone(
+def test_upload_with_unusable_comparison_warns_and_leaves_the_summary_alone(
     tmp_path, marker_repo, server, response
 ):
     server.status, server.response = 201, response
@@ -473,7 +473,7 @@ def test_unusable_comparison_warns_and_leaves_the_summary_alone(
 
 @needs_bash
 @needs_curl
-def test_hostile_comparison_is_escaped_in_the_job_summary(tmp_path, marker_repo, server):
+def test_upload_escapes_a_hostile_comparison_in_the_job_summary(tmp_path, marker_repo, server):
     hostile = json.loads(RESPONSE)
     path = "<img src=x onerror=alert(1)>|`x`\n# owned [a](javascript:alert(1))"
     hostile["comparison"]["new"]["items"][0]["path"] = path
@@ -491,7 +491,7 @@ def test_hostile_comparison_is_escaped_in_the_job_summary(tmp_path, marker_repo,
 
 @needs_bash
 @needs_curl
-def test_no_step_summary_variable_means_no_summary(tmp_path, marker_repo, server):
+def test_upload_without_a_step_summary_variable_writes_no_summary(tmp_path, marker_repo, server):
     server.status, server.response = 201, RESPONSE
     proc, _, _ = upload(tmp_path, marker_repo, server, GITHUB_STEP_SUMMARY=None)
     assert proc.returncode == 0, proc.stdout + proc.stderr
