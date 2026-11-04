@@ -27,7 +27,7 @@ GitHub Copilot Memory does this for Copilot. freshlint does it for Claude Code, 
 ## Claude Code plugin
 
 ```text
-/plugin marketplace add KellerAI/freshlint@v0.2.0
+/plugin marketplace add KellerAI/freshlint@v0.3.0
 /plugin install freshlint@freshlint
 ```
 
@@ -704,7 +704,7 @@ relative to it, so a memory can live in a subdirectory of a larger repository.
 # .pre-commit-config.yaml
 repos:
   - repo: <path or URL of this repository>
-    rev: v0.2.0
+    rev: v0.3.0
     hooks:
       - id: freshlint
 ```
