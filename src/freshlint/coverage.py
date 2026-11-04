@@ -79,8 +79,13 @@ def cited_names(block: EvidenceBlock) -> frozenset[str]:
 
 
 def covers(cited: frozenset[str], path: str, project_root: Path, home: Path) -> bool:
-    """Whether ``path`` (as the note writes it) resolves to one of the ``cited`` files."""
-    return _key(resolve(path, project_root, home)) in cited
+    """Whether ``path`` (as the note writes it) resolves to a ``cited`` file or lies inside one.
+
+    A path inside a cited directory is covered by that directory's citation; a cited file has
+    nothing inside it, so the prefix test only ever matches a directory.
+    """
+    key = _key(resolve(path, project_root, home))
+    return key in cited or any(key.startswith(c.rstrip(os.sep) + os.sep) for c in cited)
 
 
 def tracked_mentions(

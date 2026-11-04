@@ -20,7 +20,8 @@ from pathlib import Path
 
 from freshlint.fingerprint import Fingerprint
 
-STORE_VERSION = 1
+STORE_VERSION = 2  # 2: directory fingerprints (kind "dir", with entries)
+READABLE_VERSIONS = (1, 2)  # a version 1 store reads as it is: version 2 only adds fields
 STATE_INSIDE = True  # spike S1: keep state in <memory dir>/.freshlint/
 STATE_DIRNAME = ".freshlint"
 LOCK_TIMEOUT_S = 2.0  # how long a hook waits for another hook's load, change and save to finish
@@ -37,7 +38,8 @@ class CitationRecord:
     stamped: str | None
     # Why a citation the save hook saw has no fingerprint although the agent read the file:
     # "changed" (it changed after the read) or "missing:<why>" (the symbol, key or range is not
-    # there). None for a citation that was never read.
+    # there), or "unread:" and the unread files of a cited directory, one per line. None for a
+    # citation that was never read.
     problem: str | None = None
 
 
@@ -66,6 +68,17 @@ class Store:
     notes: dict[str, NoteRecord] = field(default_factory=dict)
     corrupt: bool = False
     last_scan: float | None = None
+    # Written by a newer freshlint: nothing in it is used, and it is never overwritten.
+    newer: bool = False
+    newer_version: int | None = None  # the version a newer store says it is
+
+
+class NewerStore(ValueError):
+    """The store was written by a newer freshlint than this one."""
+
+    def __init__(self, version: int) -> None:
+        super().__init__(f"store version {version} is newer than {STORE_VERSION}")
+        self.version = version
 
 
 def state_dir(memory_dir: Path) -> Path:
@@ -151,7 +164,12 @@ def _encode(store: Store) -> dict:
 
 
 def _decode(data: object) -> Store:
-    if not isinstance(data, dict) or data.get("version") != STORE_VERSION:
+    if not isinstance(data, dict):
+        raise ValueError("unsupported store version")
+    version = data.get("version")
+    if isinstance(version, int) and not isinstance(version, bool) and version > STORE_VERSION:
+        raise NewerStore(version)
+    if version not in READABLE_VERSIONS:
         raise ValueError("unsupported store version")
     notes: dict[str, NoteRecord] = {}
     for name, raw in data["notes"].items():
@@ -194,11 +212,15 @@ def load_store(memory_dir: Path) -> Store:
         return Store(corrupt=True)
     try:
         return _decode(json.loads(text))
+    except NewerStore as exc:
+        return Store(newer=True, newer_version=exc.version)
     except (ValueError, KeyError, TypeError, AttributeError):
         return Store(corrupt=True)
 
 
 def save_store(memory_dir: Path, store: Store) -> None:
+    if store.newer:  # a newer freshlint's store: this version must not overwrite it
+        return
     target = store_path(memory_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".lock-", suffix=".tmp")

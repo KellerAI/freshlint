@@ -15,20 +15,35 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from freshlint import coverage
 from freshlint.checks import Context
 from freshlint.claims import applies_to
-from freshlint.evidence import EvidenceBlock, misplaced_evidence_lines, parse_evidence, resolve
+from freshlint.evidence import (
+    Citation,
+    EvidenceBlock,
+    misplaced_evidence_lines,
+    parse_evidence,
+    resolve,
+)
 from freshlint.fingerprint import (
+    CHANGED,
     FRESH,
     GONE,
+    UNREAD,
+    Fingerprint,
     TargetMissing,
+    cites_directory,
     compare,
+    directory_changes,
+    directory_files,
     directory_problem,
     is_missing,
+    kind_change,
     level_note,
     take,
+    unread_summary,
 )
 from freshlint.ledger import raw_digest
 from freshlint.memory import Note
@@ -66,6 +81,87 @@ def _drop_covered(record: NoteRecord, block: EvidenceBlock, ctx: Context) -> Non
         record.inferred_key = None
 
 
+def _directory_citation(cit: Citation, path: Path) -> bool:
+    """Whether ``cit`` cites a directory that is fingerprinted as one; see ``cites_directory``."""
+    return cites_directory(cit) and path.is_dir()
+
+
+def _slash_hint(cit: Citation) -> str:
+    return "" if cit.path.endswith("/") else f" Write it as `{cit.path}/` to cite the directory."
+
+
+def _save_directory(
+    note: Note,
+    cit: Citation,
+    path: Path,
+    old: CitationRecord | None,
+    state: str | None,
+    reads: dict[str, str],
+    outcome: SaveOutcome,
+    today: dt.date,
+) -> CitationRecord:
+    """The record of a directory citation: its manifest, once every file in it was read.
+
+    A bare ``dir`` citation is taken as ``dir/`` here, at a save, and only here: the note is
+    never rewritten and session start never fingerprints. The read gate compares each file's
+    raw byte digest with the read ledger's; the manifest holds normalised file digests, and the
+    two are never compared with each other.
+    """
+    try:
+        files = directory_files(path, cit.path)
+    except TargetMissing as exc:
+        outcome.feedback.append(f"{note.name} cites {cit.raw}, but {exc}.")
+        return _keep(old, f"missing:{exc}")
+    seen = [reads.get(str(target.resolve())) for _, target in files]
+    unread = [rel for (rel, _), digest in zip(files, seen, strict=True) if digest is None]
+    if unread:
+        if old is None or old.fingerprint is None:
+            outcome.feedback.append(
+                f"{note.name} cites {cit.raw}, a directory, but you have not read every file "
+                f"in it in this session ({unread_summary(unread)}). Read each one with the "
+                f"Read tool before citing it, or cite the files you read.{_slash_hint(cit)}"
+            )
+            return CitationRecord(None, None, UNREAD + "\n".join(sorted(unread)))
+        if state == CHANGED:
+            todo = (  # a cited file became this directory: nothing left to re-read
+                f"Cite a file inside it, or `{cit.path.rstrip('/')}/`."
+                if kind_change(cit, old.fingerprint, path) is not None
+                else "Re-read it before relying on or updating this memory."
+            )
+            outcome.feedback.append(
+                f"{note.name} rests on {cit.raw}, which changed after this memory was written"
+                f"{_named(cit, old.fingerprint, path)}. {todo}"
+            )
+        return old
+    if any(raw_digest(target) != digest for (_, target), digest in zip(files, seen, strict=True)):
+        outcome.feedback.append(
+            f"{note.name} cites {cit.raw}, and a file in it changed after you read it. "
+            "Read it again before citing it."
+        )
+        return _keep(old, "changed")
+    try:
+        fingerprint = take(cit, path)
+    except TargetMissing as exc:
+        outcome.feedback.append(f"{note.name} cites {cit.raw}, but {exc}.")
+        return _keep(old, f"missing:{exc}")
+    if old is not None and old.fingerprint == fingerprint:
+        return old
+    if old is not None and old.fingerprint is not None:
+        outcome.renewed.append(cit.raw)
+    return CitationRecord(fingerprint, today.isoformat())
+
+
+def _named(cit: Citation, stored: Fingerprint, path: Path) -> str:
+    """``: src/x is now a directory`` or `` (a.py edited, b.py added)``, else nothing."""
+    reason = kind_change(cit, stored, path)
+    if reason is not None:
+        return f": {reason}"
+    if stored.kind != "dir":
+        return ""
+    changes = directory_changes(stored, path)
+    return f" ({', '.join(changes)})" if changes else ""
+
+
 def on_save(
     note: Note, store: Store, reads: dict[str, str], ctx: Context, today: dt.date
 ) -> SaveOutcome:
@@ -97,8 +193,26 @@ def on_save(
                     "Cite a file that exists, or remove the citation."
                 )
             continue
-        if path.is_dir():  # a directory has no fingerprint: name the problem, not a read
-            problem = directory_problem(cit.path)
+        if state == CHANGED and not _directory_citation(cit, path):
+            reason = kind_change(cit, old.fingerprint, path)
+            if reason is not None:  # nothing to re-fingerprint: report it as session start does
+                kept[cit.raw] = old
+                folder = cit.path.rstrip("/")
+                todo = (  # nothing left to re-read: say what to cite instead
+                    f"Cite a file inside it, or `{folder}/`."
+                    if path.is_dir()
+                    else "Re-read it before relying on or updating this memory."
+                )
+                outcome.feedback.append(
+                    f"{note.name} rests on {cit.raw}, which changed after this memory was "
+                    f"written: {reason}. {todo}"
+                )
+                continue
+        if _directory_citation(cit, path):
+            kept[cit.raw] = _save_directory(note, cit, path, old, state, reads, outcome, today)
+            continue
+        if path.is_dir():  # a bare `dir`, or a symbol, key or range of one: nothing to fingerprint
+            problem = directory_problem(cit)
             outcome.feedback.append(f"{note.name} cites {cit.raw}, but {problem}.")
             kept[cit.raw] = _keep(old, f"missing:{problem}")
             continue
