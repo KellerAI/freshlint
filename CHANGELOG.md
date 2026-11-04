@@ -29,7 +29,7 @@ renaming or removing one is a breaking change.
   `GITHUB_REF`, `github.event.repository.default_branch` and, on pull requests,
   `github.event.pull_request.head.sha`. They are informational: freshlint Team takes the
   default branch and the pull request head from GitHub itself. `scope` is `"paths"` when the
-  `paths` input limited the check (else `"all"`): such a run is never a baseline and is compared
+  `paths` input limited the check or `working-directory` is not `.` (else `"all"`): such a run is never a baseline and is compared
   like a diff run.
 - After a successful upload (HTTP 201), the action adds the run's comparison with the default
   branch to the job summary (`$GITHUB_STEP_SUMMARY`): new and fixed findings by file and rule,

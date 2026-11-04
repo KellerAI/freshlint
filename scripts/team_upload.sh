@@ -25,7 +25,8 @@
 # ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN (set by the runner when the
 # job has `permissions: id-token: write`), GITHUB_REPOSITORY, GITHUB_REPOSITORY_ID, GITHUB_SHA,
 # GITHUB_REF, GITHUB_STEP_SUMMARY and GITHUB_ACTION_PATH, and the optional
-# FL_TEAM_DEFAULT_BRANCH and FL_TEAM_HEAD_SHA (from the workflow's event).
+# FL_TEAM_DEFAULT_BRANCH and FL_TEAM_HEAD_SHA (from the workflow's event), and
+# FL_TEAM_WORKING_DIRECTORY (the working-directory input).
 set -euo pipefail
 
 notice() { echo "::notice title=freshlint team::$1"; }
@@ -93,8 +94,14 @@ meta=()
 if [[ -n "${GITHUB_REF:-}" ]]; then meta+=(--ref "$GITHUB_REF"); fi
 if [[ -n "${FL_TEAM_DEFAULT_BRANCH:-}" ]]; then meta+=(--default-branch "$FL_TEAM_DEFAULT_BRANCH"); fi
 if [[ -n "${FL_TEAM_HEAD_SHA:-}" ]]; then meta+=(--head-sha "$FL_TEAM_HEAD_SHA"); fi
-# A check limited to the paths input is not a whole-repository scan: never a baseline.
-if [[ -n "${FL_PATHS//[[:space:]]/}" ]]; then meta+=(--scope paths); else meta+=(--scope all); fi
+# A check limited to the paths input, or run in a subdirectory (a monorepo package), is not a
+# whole-repository scan: never a baseline.
+workdir="${FL_TEAM_WORKING_DIRECTORY:-.}"
+if [[ -n "${FL_PATHS//[[:space:]]/}" || ("$workdir" != "." && "$workdir" != "./") ]]; then
+  meta+=(--scope paths)
+else
+  meta+=(--scope all)
+fi
 if ! python -I -m freshlint.team_payload ${meta[@]+"${meta[@]}"} <"$tmp/report.json" >"$tmp/payload.json"; then
   warn "upload skipped: could not build the upload payload."
   exit 1

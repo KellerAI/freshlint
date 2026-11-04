@@ -116,4 +116,5 @@ runs:
         # Event metadata for the comparison with the default branch (empty when absent).
         FL_TEAM_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         FL_TEAM_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        FL_TEAM_WORKING_DIRECTORY: ${{ inputs.working-directory }}
       run: bash "$GITHUB_ACTION_PATH/scripts/team_upload.sh"

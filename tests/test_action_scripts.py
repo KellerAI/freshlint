@@ -152,6 +152,7 @@ def test_steps_share_the_same_inputs_except_format():
     default_branch = upload.pop("FL_TEAM_DEFAULT_BRANCH")
     assert default_branch == "${{ github.event.repository.default_branch }}"
     assert upload.pop("FL_TEAM_HEAD_SHA") == "${{ github.event.pull_request.head.sha }}"
+    assert upload.pop("FL_TEAM_WORKING_DIRECTORY") == "${{ inputs.working-directory }}"
     assert check == upload
 
 
@@ -420,11 +421,23 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
 
 @needs_bash
 @needs_curl
-@pytest.mark.parametrize(("paths", "scope"), [("state.md notes.md", "paths"), ("   ", "all")])
-def test_upload_sends_scope_paths_when_the_paths_input_is_set(
-    tmp_path, marker_repo, server, paths, scope
+@pytest.mark.parametrize(
+    ("paths", "workdir", "scope"),
+    [
+        ("state.md notes.md", ".", "paths"),
+        ("   ", ".", "all"),
+        ("", "./", "all"),
+        ("", None, "all"),
+        ("", "packages/notes", "paths"),
+        ("", "../repo", "paths"),
+    ],
+)
+def test_upload_sends_scope_paths_for_paths_or_a_working_directory(
+    tmp_path, marker_repo, server, paths, workdir, scope
 ):
-    proc, _, _ = upload(tmp_path, marker_repo, server, FL_PATHS=paths)
+    proc, _, _ = upload(
+        tmp_path, marker_repo, server, FL_PATHS=paths, FL_TEAM_WORKING_DIRECTORY=workdir
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     [post] = [r for r in server.requests() if r["method"] == "POST"]
     payload = json.loads((server.bodies / post["body_file"]).read_text())
