@@ -119,6 +119,105 @@ def test_top_level_metadata_and_summary():
     }
 
 
+OPTIONAL_FIELDS = {"ref", "default_branch", "head_sha", "scope"}
+GIT = {
+    "ref": "refs/pull/7/merge",
+    "default_branch": "main",
+    "head_sha": "89abcdef0123456789abcdef0123456789abcdef",
+    "scope": "all",
+}
+
+
+def test_git_fields_are_optional_and_left_out_when_empty():
+    plain = build_payload(report(), **META)
+    assert OPTIONAL_FIELDS.isdisjoint(plain)
+    empty = build_payload(report(), **META, ref="", default_branch="", head_sha="")
+    assert empty == plain
+    VALIDATOR.validate(plain)
+
+
+def test_git_fields_are_kept_when_given():
+    payload = build_payload(report(), **META, **GIT)
+    assert {key: payload[key] for key in OPTIONAL_FIELDS} == GIT
+    VALIDATOR.validate(payload)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    ["refs/heads/main", "refs/pull/12/merge", "refs/tags/v1.2.3", "refs/heads/feat/ünï-côdé"],
+)
+def test_valid_refs_are_accepted_by_transform_and_schema(ref):
+    payload = build_payload(report(), **META, ref=ref, default_branch=ref.split("/", 2)[2])
+    VALIDATOR.validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ref", "main"),
+        ("ref", "heads/main"),
+        ("ref", "refs/"),
+        ("ref", "refs/heads/a b"),
+        ("ref", "refs/heads/a~1"),
+        ("ref", "refs/heads/a\\b"),
+        ("ref", "refs/heads/a\nb"),
+        ("ref", "refs/heads/main\n"),
+        ("ref", "refs/heads/" + "x" * 1020),
+        ("default_branch", "a b"),
+        ("default_branch", "a:b"),
+        ("default_branch", "main\n"),
+        ("default_branch", "x" * 256),
+        ("head_sha", "89abcdef"),
+        ("head_sha", "G" * 40),
+        ("head_sha", "89ABCDEF0123456789ABCDEF0123456789ABCDEF"),
+    ],
+)
+def test_invalid_git_fields_are_rejected_by_transform_and_schema(field, value):
+    with pytest.raises(PayloadError):
+        build_payload(report(), **META, **{field: value})
+    payload = {**build_payload(report(), **META), field: value}
+    if not value.endswith("\n"):  # Python's re `$` also matches before a final newline
+        assert not VALIDATOR.is_valid(payload)
+
+
+@pytest.mark.parametrize("scope", ["all", "paths"])
+def test_scope_is_kept_when_given(scope):
+    payload = build_payload(report(), **META, scope=scope)
+    assert payload["scope"] == scope
+    VALIDATOR.validate(payload)
+
+
+@pytest.mark.parametrize("scope", ["some", "ALL", "path", " paths"])
+def test_invalid_scope_is_rejected_by_transform_and_schema(scope):
+    with pytest.raises(PayloadError, match="scope"):
+        build_payload(report(), **META, scope=scope)
+    assert not VALIDATOR.is_valid({**build_payload(report(), **META), "scope": scope})
+
+
+def test_schema_scope_matches_the_transform():
+    assert SCHEMA["properties"]["scope"]["enum"] == list(team_payload.SCOPES)
+
+
+def test_golden_payload_with_scope_paths_is_the_transform_of_the_golden_report():
+    proc = run_module(
+        (FIXTURES / "report-sample.json").read_text(),
+        *("--repository", META["repo"], "--repository-id", str(META["repository_id"])),
+        *("--sha", META["sha"], "--ran-at", META["ran_at"], "--ref", "refs/heads/main"),
+        *("--default-branch", "main", "--scope", "paths"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == (FIXTURES / "valid-with-scope-paths.payload.json").read_text()
+
+
+def test_schema_patterns_match_the_transform():
+    props = SCHEMA["properties"]
+    assert props["ref"]["pattern"] == f"^{team_payload.REF_RE.pattern}$"
+    assert props["default_branch"]["pattern"] == f"^{team_payload.BRANCH_RE.pattern}$"
+    assert props["head_sha"]["pattern"] == f"^{team_payload.SHA_RE.pattern}$"
+    assert props["ref"]["maxLength"] == team_payload.MAX_REF_CHARS
+    assert props["default_branch"]["maxLength"] == team_payload.MAX_BRANCH_CHARS
+
+
 def test_range_and_today_are_not_copied():
     raw = report()
     raw["range"] = f"origin/{MARKER}...HEAD"
@@ -441,7 +540,10 @@ def test_every_object_in_the_schema_forbids_additional_properties():
     assert len(objects) == 3  # the run, its summary, a finding
     for where, node in objects:
         assert node.get("additionalProperties") is False, where
-        assert set(node["required"]) == set(node["properties"]), where
+        optional = set(node["properties"]) - set(node["required"])
+        assert set(node["required"]) <= set(node["properties"]), where
+        # team-run/1 grew four optional fields (FT-10); everything else stays required.
+        assert optional == (OPTIONAL_FIELDS if where == "$" else set()), where
 
 
 def test_schema_constants_match_the_transform():
@@ -465,6 +567,41 @@ def test_golden_payload_is_the_transform_of_the_golden_report():
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == (FIXTURES / "valid-sample.payload.json").read_text()
+
+
+def test_golden_payload_with_git_fields_is_the_transform_of_the_golden_report():
+    proc = run_module(
+        (FIXTURES / "report-sample.json").read_text(),
+        "--repository",
+        META["repo"],
+        "--repository-id",
+        str(META["repository_id"]),
+        "--sha",
+        META["sha"],
+        "--ran-at",
+        META["ran_at"],
+        "--ref",
+        GIT["ref"],
+        "--default-branch",
+        GIT["default_branch"],
+        "--head-sha",
+        GIT["head_sha"],
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == (FIXTURES / "valid-with-git-refs.payload.json").read_text()
+
+
+def test_git_fields_never_come_from_the_environment():
+    env = {**ENV, "GITHUB_REF": "refs/heads/main", "GITHUB_HEAD_REF": "feature"}
+    proc = run_module(json.dumps(report()), "--ran-at", META["ran_at"], env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert OPTIONAL_FIELDS.isdisjoint(json.loads(proc.stdout))
+
+
+def test_invalid_git_argument_fails_closed():
+    proc = run_module(json.dumps(report()), "--ref", f"refs/heads/{MARKER} x", env=ENV)
+    assert proc.returncode == 2 and proc.stdout == ""
+    assert MARKER not in proc.stderr
 
 
 def test_schema_integer_limits():

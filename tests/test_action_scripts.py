@@ -39,6 +39,9 @@ GITHUB = {
     "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
 }
 TOKEN = fake_oidc_token("pytest")
+PR_HEAD_SHA = "89abcdef0123456789abcdef0123456789abcdef"
+SUMMARY_BEFORE = "# Earlier step output\n"
+RESPONSE = (ROOT / "tests" / "fixtures" / "team" / "response-201-sample.json").read_bytes()
 
 needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 needs_curl = pytest.mark.skipif(shutil.which("curl") is None, reason="needs curl")
@@ -146,6 +149,10 @@ def test_steps_share_the_same_inputs_except_format():
     assert check.pop("FL_FORMAT") == "${{ inputs.format }}"
     assert upload.pop("FL_TEAM_URL") == "${{ inputs.team-url }}"
     assert upload.pop("FL_TEAM_AUDIENCE") == "${{ inputs.team-audience }}"
+    default_branch = upload.pop("FL_TEAM_DEFAULT_BRANCH")
+    assert default_branch == "${{ github.event.repository.default_branch }}"
+    assert upload.pop("FL_TEAM_HEAD_SHA") == "${{ github.event.pull_request.head.sha }}"
+    assert upload.pop("FL_TEAM_WORKING_DIRECTORY") == "${{ inputs.working-directory }}"
     assert check == upload
 
 
@@ -298,6 +305,8 @@ def upload(tmp_path, cwd, server, **overrides):
     shim_dir, curl_log = curl_shim(tmp_path)
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir(exist_ok=True)
+    summary = tmp_path / "step-summary.md"
+    summary.write_text(SUMMARY_BEFORE)
     env = env_for(FL_MODE="diff", FL_BASE="HEAD~1", FL_HEAD="HEAD")
     env.pop("FL_FORMAT")
     # No PYTHONPATH: the script runs Python in isolated mode, so freshlint must resolve from
@@ -312,6 +321,11 @@ def upload(tmp_path, cwd, server, **overrides):
             "FL_TEAM_AUDIENCE": AUDIENCE,
             "ACTIONS_ID_TOKEN_REQUEST_URL": f"{server.base}/token?api-version=2.0",
             "ACTIONS_ID_TOKEN_REQUEST_TOKEN": REQUEST_TOKEN,
+            # Never the real job summary of a CI run of these tests.
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "GITHUB_REF": "refs/pull/7/merge",
+            "FL_TEAM_DEFAULT_BRANCH": "main",
+            "FL_TEAM_HEAD_SHA": PR_HEAD_SHA,
         }
     )
     for key, value in overrides.items():
@@ -362,6 +376,10 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
     )
     assert payload["repo"] == GITHUB["GITHUB_REPOSITORY"]
     assert payload["mode"] == "diff"
+    assert payload["ref"] == "refs/pull/7/merge"
+    assert payload["default_branch"] == "main"
+    assert payload["head_sha"] == PR_HEAD_SHA
+    assert payload["scope"] == "all"  # no paths input: a whole-repository scan
 
     # The upload scanned exactly what the check scans: the same summary as the check step.
     check = bash(
@@ -396,6 +414,119 @@ def test_upload_sends_exactly_one_post_without_leaking(tmp_path, marker_repo, se
     # The temporary directory with the header files is gone.
     assert list(runner_temp.iterdir()) == []
     assert "freshlint team: uploaded the run summary (HTTP 202)" in proc.stdout
+    # Only a 201 carries a comparison; the job summary is untouched.
+    assert (tmp_path / "step-summary.md").read_text() == SUMMARY_BEFORE
+    assert "job summary" not in proc.stdout
+
+
+@needs_bash
+@needs_curl
+@pytest.mark.parametrize(
+    ("paths", "workdir", "scope"),
+    [
+        ("state.md notes.md", ".", "paths"),
+        ("   ", ".", "all"),
+        ("", "./", "all"),
+        ("", None, "all"),
+        ("", "packages/notes", "paths"),
+        ("", "../repo", "paths"),
+    ],
+)
+def test_upload_sends_scope_paths_for_paths_or_a_working_directory(
+    tmp_path, marker_repo, server, paths, workdir, scope
+):
+    proc, _, _ = upload(
+        tmp_path, marker_repo, server, FL_PATHS=paths, FL_TEAM_WORKING_DIRECTORY=workdir
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    [post] = [r for r in server.requests() if r["method"] == "POST"]
+    payload = json.loads((server.bodies / post["body_file"]).read_text())
+    assert payload["scope"] == scope
+    Draft202012Validator(SCHEMA, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(
+        payload
+    )
+
+
+@needs_bash
+@needs_curl
+def test_upload_leaves_out_git_fields_the_event_does_not_have(tmp_path, marker_repo, server):
+    proc, _, _ = upload(
+        tmp_path,
+        marker_repo,
+        server,
+        GITHUB_REF=None,
+        FL_TEAM_DEFAULT_BRANCH="",
+        FL_TEAM_HEAD_SHA="",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    [post] = [r for r in server.requests() if r["method"] == "POST"]
+    payload = json.loads((server.bodies / post["body_file"]).read_text())
+    assert {"ref", "default_branch", "head_sha"}.isdisjoint(payload)
+    assert payload["scope"] == "all"
+
+
+@needs_bash
+@needs_curl
+def test_upload_created_writes_the_comparison_to_the_job_summary(tmp_path, marker_repo, server):
+    server.status, server.response = 201, RESPONSE
+    proc, calls, runner_temp = upload(tmp_path, marker_repo, server)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    from freshlint.team_summary import parse, render
+
+    expected = render(parse(json.loads(RESPONSE)))
+    assert (tmp_path / "step-summary.md").read_text() == SUMMARY_BEFORE + expected
+    assert proc.stdout.splitlines()[-2:] == [
+        "freshlint team: uploaded the run summary (HTTP 201)",
+        "freshlint team: wrote the comparison to the job summary",
+    ]
+    assert len(calls) == 2  # no request beyond the token and the one POST
+    assert list(runner_temp.iterdir()) == []
+
+
+@needs_bash
+@needs_curl
+@pytest.mark.parametrize(
+    "response",
+    [b"", b"not json", json.dumps({"run_id": "x"}).encode(), b"{" * 200_000],
+    ids=["empty", "text", "no-comparison", "deep"],
+)
+def test_upload_with_unusable_comparison_warns_and_leaves_the_summary_alone(
+    tmp_path, marker_repo, server, response
+):
+    server.status, server.response = 201, response
+    proc, _, runner_temp = upload(tmp_path, marker_repo, server)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (tmp_path / "step-summary.md").read_text() == SUMMARY_BEFORE
+    assert "::warning title=freshlint team::the upload succeeded, but" in proc.stdout
+    assert "Traceback" not in proc.stdout + proc.stderr
+    assert list(runner_temp.iterdir()) == []
+
+
+@needs_bash
+@needs_curl
+def test_upload_escapes_a_hostile_comparison_in_the_job_summary(tmp_path, marker_repo, server):
+    hostile = json.loads(RESPONSE)
+    path = "<img src=x onerror=alert(1)>|`x`\n# owned [a](javascript:alert(1))"
+    hostile["comparison"]["new"]["items"][0]["path"] = path
+    hostile["comparison"]["url"] = "javascript:alert(1)"
+    server.status, server.response = 201, json.dumps(hostile).encode()
+    proc, _, _ = upload(tmp_path, marker_repo, server)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    written = (tmp_path / "step-summary.md").read_text()[len(SUMMARY_BEFORE) :]
+    assert "javascript:" not in written.replace(" [a](javascript:alert(1)) ", "")
+    assert "\n# owned" not in written
+    assert (
+        "`` <img src=x onerror=alert(1)>\\|`x`\ufffd# owned [a](javascript:alert(1)) ``" in written
+    )
+
+
+@needs_bash
+@needs_curl
+def test_upload_without_a_step_summary_variable_writes_no_summary(tmp_path, marker_repo, server):
+    server.status, server.response = 201, RESPONSE
+    proc, _, _ = upload(tmp_path, marker_repo, server, GITHUB_STEP_SUMMARY=None)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "job summary" not in proc.stdout
 
 
 @needs_bash

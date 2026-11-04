@@ -22,6 +22,10 @@ Please include the freshlint version, how you ran it, and a minimal reproduction
   messages or hints, which can quote note text (`python -m freshlint.team_payload` builds the
   body; `schemas/team-run-v1.schema.json` is its contract). The token is masked, kept off
   command lines in a 0600 header file under `RUNNER_TEMP`, and deleted after the request.
+  After a 201, the response's comparison is rendered into the job summary by
+  `python -I -m freshlint.team_summary`, a pure function that treats the response as
+  untrusted: every path, rule id and branch name is shown inside a code span, and the link is
+  used only if it is a plain https URL. No further request is made.
   The upload never runs code from the checked-out repository: its Python calls use isolated
   mode (`python -I`, so the working directory is not on `sys.path`), and the runner's
   `ACTIONS_ID_TOKEN_REQUEST_*` variables are removed from the environment before any child

@@ -743,15 +743,22 @@ jobs:
           team-url: <the ingest URL freshlint Team gives you>
 ```
 
-* **What is sent:** the repository id and name, the commit SHA, the run time, the freshlint
-  version, the mode, the error, warning and file counts, and per finding the file path, line,
-  rule id, severity and that rule's static summary from the catalog. Finding messages and
+* **What is sent:** the repository id and name, the commit SHA, the git ref, the default
+  branch name and (on pull requests) the head commit, the run time, the freshlint version, the
+  mode, the error, warning and file counts, and per finding the file path, line, rule id,
+  severity and that rule's static summary from the catalog. Finding messages and
   hints are never sent, because they can quote note text, and neither is any file content.
   [`schemas/team-run-v1.schema.json`](schemas/team-run-v1.schema.json) is the contract.
 * **How:** after the check, a separate step reruns it with the same arguments and
   `--format json`, turns the report into the payload (`python -m freshlint.team_payload`),
   requests an OIDC token for `team-audience` (default `freshlint-team`) and sends one POST.
   The token is masked and never put on a command line.
+* **What you get back:** after a successful upload the job summary shows the run compared
+  with the latest full run on the default branch: new and fixed findings by file and rule, the
+  error and warning trend, and a link to the repository in freshlint Team. A `diff` run is
+  compared with the default branch's current health, and counts a finding as fixed only in
+  files it reported. freshlint Team also adds a "Freshlint Team" check to the commit when its
+  GitHub App may write checks; it never fails.
 * **When there is no token** (fork pull requests, Dependabot, or a workflow without
   `id-token: write`) the step prints one notice and skips the upload.
 * **The check result never changes:** the upload step cannot fail the job.
